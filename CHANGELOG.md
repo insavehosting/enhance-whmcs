@@ -1,3 +1,21 @@
+## [1.0.2] - 2026-05-16
+
+### Fixed
+- **Critical** `createWebsite`: `subscriptionId` enviado como string em vez de `int` causava o erro
+  `Json deserialize error: invalid type: string "X", expected i32` na API do Enhance — corrigido
+  com cast explícito `(int)` antes de serializar o JSON.
+- Typo `YespleMode` → `SimpleMode` em `enhance_ConfigOptions()` (a chave inválida era ignorada
+  silenciosamente pelo WHMCS, o que desactivava o modo de selecção simples do dropdown de planos).
+- Chave de config `'plano'` renomeada para `'plan'` para consistência com os padrões WHMCS.
+
+### Added
+- `composer.json` adicionado ao módulo (o README mencionava `composer install` mas o ficheiro
+  não existia — embora o módulo não tenha dependências externas, o ficheiro é necessário para
+  não causar confusão).
+- Suporte a **Server Groups**: função `enhance_GetServerGroups()` adicionada, permitindo que o
+  WHMCS associe produtos a grupos de servidores Enhance específicos.
+- README actualizado para clarificar que `composer install` é opcional (sem dependências externas).
+
 # Changelog
 
 ## Version 1.0.1

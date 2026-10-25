@@ -466,7 +466,7 @@ class EnhanceApi
 
     public function createWebsite(string $orgId, string $subId, string $domain): array
     {
-        return $this->send('POST', "/orgs/{$orgId}/websites?kind=normal", ['domain' => $domain, 'subscriptionId' => $subId]);
+        return $this->send('POST', "/orgs/{$orgId}/websites?kind=normal", ['domain' => $domain, 'subscriptionId' => (int) $subId]);
     }
 
     public function deleteWebsite(string $orgId, string $websiteId): array

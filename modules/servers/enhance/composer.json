@@ -1,0 +1,12 @@
+{
+    "name": "enhance/whmcs-module",
+    "description": "Enhance Control Panel WHMCS Server Module",
+    "type": "whmcs-module",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.0"
+    },
+    "config": {
+        "optimize-autoloader": true
+    }
+}

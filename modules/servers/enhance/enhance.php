@@ -139,12 +139,12 @@ function enhance_MetaData(): array
 function enhance_ConfigOptions(): array
 {
     return [
-        'plano' => [
+        'plan' => [
             'FriendlyName' => 'Hosting Package',
             'Type'         => 'text',
             'Size'         => '255',
             'Loader'       => 'enhance_LoadPlans',
-            'YespleMode'   => true,
+            'SimpleMode'   => true,
         ],
         'hardDelete' => [
             'FriendlyName' => 'Termination Mode',
@@ -168,6 +168,32 @@ function enhance_LoadPlans(array $params): array
     } catch (Exception $e) {
         return [];
     }
+}
+
+// =============================================================================
+// Server Groups (required for WHMCS server group assignment)
+// =============================================================================
+
+/**
+ * Returns available server groups from Enhance to allow WHMCS admins to
+ * assign products to specific server groups.
+ *
+ * In WHMCS, a "Server Group" maps to an Enhance master organisation / server.
+ * This function is called by WHMCS when the admin configures a product so they
+ * can pick which server (group) should be used for provisioning.
+ *
+ * @return array  Associative array of [groupId => groupName]
+ */
+function enhance_GetServerGroups(array $params): array
+{
+    // WHMCS server groups are managed inside WHMCS itself (System Settings →
+    // Products/Services → Servers → Server Groups).  This function simply
+    // returns an empty array to signal to WHMCS that the module supports the
+    // feature; the admin defines and assigns groups inside the WHMCS UI.
+    //
+    // If you want to pre-populate groups from Enhance you could call the API
+    // here and return an array like ['group-uuid' => 'Group Name'].
+    return [];
 }
 
 // =============================================================================
