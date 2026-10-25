@@ -18,6 +18,35 @@
 
 # Changelog
 
+## Version 1.0.2-insave.1 (fork of webdighost v1.0.2)
+
+### Fixed
+
+- ClientEdit no longer creates Enhance organisations/logins or sends credential e-mails.
+  It only renames an already linked organisation, only when first/last/company name changed,
+  and only for clients with an Active/Suspended Enhance service.
+- Organisations are created only by CreateAccount. Suspend, Unsuspend, Terminate, ChangePackage
+  and SSO work with the linked organisation and fail instead of creating/relinking one.
+- An Enhance API error other than 404 no longer drops the stored EnhanceOrgId / SUBSCRIPTION_ID
+  (previously a timeout or 5xx could relink the client or create a duplicate organisation).
+- Automatic linking by organisation name removed; linking by owner e-mail is off by default
+  (`ENHANCE_AUTO_LINK_BY_EMAIL` in config.php) — it allowed handing another customer's organisation
+  or login to a client who changed their e-mail.
+- Terminate never guesses: without SUBSCRIPTION_ID it refuses; a 404 subscription counts as removed.
+  Subscription guessing (suspend/unsuspend/change package) skips subscriptions mapped to other services.
+- includes/hooks/enhance.php: removed the DailyCronJob that called
+  enhance_importer_run_daily_sync(true, 0) and threw a TypeError on every daily cron.
+- includes/hooks/enhance_importer_daily_sync.php: wrong require path (includes/modules/...) that
+  caused a fatal error on every WHMCS page; files are now loaded lazily inside the hook.
+- Daily sync only mirrors Active <-> Suspended and never revives Terminated/Cancelled services.
+- New org: if the Owner membership cannot be created, the org is rolled back.
+- Module log: generated login passwords are masked, one-time SSO URLs are redacted.
+- Client SSO is refused for non-Active services.
+- Admin profile widget: actions use the org linked to the client, never an org ID from the request;
+  Delete Org is refused while the client has Active/Suspended Enhance services; Link Org validates
+  the UUID, checks the org exists and is not linked to another client; no API calls for clients
+  without Enhance hosting unless the admin opens the link form; output escaping.
+
 ## Version 1.0.1
 
 ### Fixed

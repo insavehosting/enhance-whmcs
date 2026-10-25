@@ -122,11 +122,23 @@ class EnhanceApi
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        if ($this->debug) {
-            $this->writeLog(['method' => $method, 'url' => $url, 'status' => $httpCode, 'response' => $raw]);
+        // Never keep secrets in the WHMCS module log / debug file:
+        // - generated login passwords are masked via logModuleCall's replace list;
+        // - one-time SSO login URLs are replaced entirely.
+        $replace = [];
+        if (isset($body['password']) && is_string($body['password']) && $body['password'] !== '') {
+            $replace[] = $body['password'];
+        }
+        $logResponse = (string) $raw;
+        if (preg_match('#/sso$#', (string) strtok($path, '?'))) {
+            $logResponse = '[redacted: one-time SSO URL]';
         }
 
-        logModuleCall('enhance', "{$method} {$path}", $body, $raw, $raw, []);
+        if ($this->debug) {
+            $this->writeLog(['method' => $method, 'url' => $url, 'status' => $httpCode, 'response' => $logResponse]);
+        }
+
+        logModuleCall('enhance', "{$method} {$path}", $body, $logResponse, $logResponse, $replace);
 
         if ($curlErr) {
             return ['code' => 'curl_error', 'message' => $curlErr, '_httpCode' => $httpCode];
@@ -201,39 +213,48 @@ class EnhanceApi
     }
 
     /**
-     * Creates customer org + login + owner link + welcome email.
-     * Rolls back the org if login creation fails.
-     * PT: Cria org + login + owner + email. Rollback da org se o login falhar.
+     * Creates customer org + login + owner link + credentials e-mail.
+     * Rolls the org back if the login or the Owner membership cannot be created.
+     * Must only be reached from CreateAccount (see syncCustomerFromWhmcs $allowCreate).
      */
     public function createCustomerOrg(int $whmcsClientId, string $name, string $email, string $company): array
     {
-        $orgName = ($company !== '') ? $company : $name;
+        $orgName = $this->buildOrgName($name, $email, $company);
         $org     = $this->send('POST', "/orgs/{$this->masterOrgId}/customers", ['name' => $orgName]);
 
         if (empty($org['id'])) {
-            return ['error' => true, 'message' => 'Could not create organisation: ' . ($org['detail'] ?? json_encode($org))];
+            return ['error' => true, 'message' => 'Could not create organisation: ' . $this->errorText($org)];
         }
 
-        $orgId   = $org['id'];
+        $orgId   = (string) $org['id'];
         $newPass = $this->generatePassword();
-        $login   = $this->createLogin($orgId, $email, $newPass, $name);
+        $login   = $this->createLogin($orgId, $email, $newPass, $name !== '' ? $name : $email);
 
         if (empty($login['id'])) {
+            if (self::autoLinkByEmail()) {
+                $existing = $this->findLoginByEmail($email);
+                if (!empty($existing['id'])) {
+                    $member = $this->linkMemberAsOwner($orgId, (string) $existing['id']);
+                    if (empty($member['code'])) {
+                        $this->saveClientOrgId($whmcsClientId, $orgId);
+                        logActivity("Enhance: organisation {$orgId} created for client #{$whmcsClientId}, existing login linked as Owner (ENHANCE_AUTO_LINK_BY_EMAIL)");
+                        return ['error' => false, 'orgId' => $orgId];
+                    }
+                }
+            }
             $this->deleteOrg($orgId);
-            return ['error' => true, 'message' => 'Could not create login (org rolled back): ' . ($login['detail'] ?? json_encode($login))];
+            return ['error' => true, 'message' => 'Could not create Enhance login (organisation rolled back): '
+                . $this->errorText($login)
+                . '. If a login with this e-mail already exists in Enhance, link the organisation manually in the WHMCS client profile.'];
         }
 
-        $this->linkMemberAsOwner($orgId, $login['id']);
+        $member = $this->linkMemberAsOwner($orgId, (string) $login['id']);
+        if (!empty($member['code'])) {
+            $this->deleteOrg($orgId);
+            return ['error' => true, 'message' => 'Could not make the new login Owner (organisation rolled back): ' . $this->errorText($member)];
+        }
 
-        // Persist in WHMCS / Guardar no WHMCS
-        Capsule::table('tblcustomfieldsvalues')
-            ->where(['fieldid' => $this->clientOrgFieldId, 'relid' => $whmcsClientId])
-            ->delete();
-        Capsule::table('tblcustomfieldsvalues')->insert([
-            'fieldid' => $this->clientOrgFieldId,
-            'relid'   => $whmcsClientId,
-            'value'   => $orgId,
-        ]);
+        $this->saveClientOrgId($whmcsClientId, $orgId);
 
         localAPI('SendEmail', [
             'messagename' => self::EMAIL_TEMPLATE_NAME,
@@ -241,28 +262,39 @@ class EnhanceApi
             'customvars'  => base64_encode(serialize(['email' => $email, 'password' => $newPass, 'urlPainel' => $this->host])),
         ]);
 
+        logActivity("Enhance: organisation {$orgId} created for client #{$whmcsClientId}");
+
         return ['error' => false, 'orgId' => $orgId];
     }
 
     /**
-     * Ensures the WHMCS client has a valid Enhance org and an owner member.
+     * Resolves the Enhance organisation of a WHMCS client and keeps its name in sync.
+     *
+     * $allowCreate = true  — only CreateAccount: if no organisation is linked (or the linked one
+     *                        returns 404), a new one is created.
+     * $allowCreate = false — everything else (suspend, unsuspend, terminate, change package, SSO,
+     *                        ClientEdit): never creates or relinks anything; fails instead.
+     *
+     * Any API error other than 404 fails closed: the stored EnhanceOrgId is never replaced
+     * because of a timeout or a 5xx.
      */
-    public function syncCustomerFromWhmcs(int $whmcsClientId, string $name, string $email, string $company = ''): array
+    public function syncCustomerFromWhmcs(int $whmcsClientId, string $name, string $email, string $company = '', bool $allowCreate = false): array
     {
-        $orgName = trim($company) !== '' ? trim($company) : trim($name);
-        if ($orgName === '') {
-            $orgName = $email;
-        }
-
-        $orgId = $this->getClientOrgId($whmcsClientId);
+        $orgName = $this->buildOrgName($name, $email, $company);
+        $orgId   = $this->getClientOrgId($whmcsClientId);
         $created = false;
         $changed = [];
 
         if ($orgId) {
             $org = $this->getOrg($orgId);
-            if (!empty($org['code'])) {
-                $orgId = null;
+            if ($this->isNotFound($org)) {
+                if (!$allowCreate) {
+                    return ['success' => false, 'message' => "Linked Enhance organisation {$orgId} was not found (404). Re-link it in the WHMCS client profile."];
+                }
+                $orgId     = null;
                 $changed[] = 'stored_org_missing';
+            } elseif (!empty($org['code'])) {
+                return ['success' => false, 'message' => 'Enhance API error while loading organisation: ' . $this->errorText($org)];
             } elseif (($org['name'] ?? '') !== $orgName) {
                 $resp = $this->updateOrgName($orgId, $orgName);
                 if (empty($resp['code'])) {
@@ -271,12 +303,17 @@ class EnhanceApi
             }
         }
 
-        if (!$orgId) {
-            $match = $this->findCustomerOrgByEmailOrName($email, $orgName);
+        if (!$orgId && !$allowCreate) {
+            return ['success' => false, 'message' => 'No Enhance organisation is linked to this WHMCS client.'];
+        }
+
+        if (!$orgId && self::autoLinkByEmail()) {
+            $match = $this->findCustomerOrgByOwnerEmail($email);
             if ($match) {
-                $orgId = $match['id'];
+                $orgId = (string) $match['id'];
                 $this->saveClientOrgId($whmcsClientId, $orgId);
-                $changed[] = 'org_relinked';
+                $changed[] = 'org_relinked_by_email';
+                logActivity("Enhance: client #{$whmcsClientId} linked to existing organisation {$orgId} by owner e-mail (ENHANCE_AUTO_LINK_BY_EMAIL)");
             }
         }
 
@@ -285,23 +322,23 @@ class EnhanceApi
             if (!empty($result['error'])) {
                 return ['success' => false, 'message' => $result['message'] ?? 'Could not create organisation'];
             }
-            $orgId = $result['orgId'];
-            $created = true;
+            $orgId     = (string) $result['orgId'];
+            $created   = true;
             $changed[] = 'org_created';
         }
 
-        $owner = $this->findOwnerMember($orgId);
-        if (!$owner) {
-            $loginResult = $this->createLogin($orgId, $email, $this->generatePassword(), $name ?: $email);
+        // Repair a missing Owner only on the provisioning path; never from ClientEdit/SSO.
+        if ($allowCreate && !$created && !$this->findOwnerMember($orgId)) {
+            $loginResult = $this->createLogin($orgId, $email, $this->generatePassword(), $name !== '' ? $name : $email);
             if (!empty($loginResult['id'])) {
-                $member = $this->linkMemberAsOwner($orgId, $loginResult['id']);
+                $member = $this->linkMemberAsOwner($orgId, (string) $loginResult['id']);
                 if (empty($member['code'])) {
                     $changed[] = 'owner_created';
                 }
-            } else {
+            } elseif (self::autoLinkByEmail()) {
                 $byEmail = $this->findLoginByEmail($email);
                 if (!empty($byEmail['id'])) {
-                    $member = $this->linkMemberAsOwner($orgId, $byEmail['id']);
+                    $member = $this->linkMemberAsOwner($orgId, (string) $byEmail['id']);
                     if (empty($member['code'])) {
                         $changed[] = 'existing_login_linked_as_owner';
                     }
@@ -312,18 +349,77 @@ class EnhanceApi
         return ['success' => true, 'orgId' => $orgId, 'created' => $created, 'changed' => $changed];
     }
 
-    public function findCustomerOrgByEmailOrName(string $email, string $name): ?array
+    /**
+     * Renames the linked organisation if the WHMCS name/company changed.
+     * Never creates, relinks or touches members. Returns false when nothing is linked.
+     */
+    public function syncOrgName(int $whmcsClientId, string $name, string $email, string $company = ''): bool
     {
+        $orgId = $this->getClientOrgId($whmcsClientId);
+        if (!$orgId) {
+            return false;
+        }
+        $org = $this->getOrg($orgId);
+        if (!empty($org['code'])) {
+            throw new Exception("Could not load Enhance organisation {$orgId}: " . $this->errorText($org));
+        }
+        $orgName = $this->buildOrgName($name, $email, $company);
+        if (($org['name'] ?? '') === $orgName) {
+            return true;
+        }
+        $resp = $this->updateOrgName($orgId, $orgName);
+        if (!empty($resp['code'])) {
+            throw new Exception("Could not rename Enhance organisation {$orgId}: " . $this->errorText($resp));
+        }
+        return true;
+    }
+
+    public function findCustomerOrgByOwnerEmail(string $email): ?array
+    {
+        if (trim($email) === '') {
+            return null;
+        }
         $customers = $this->getCustomers();
         foreach ($customers['items'] ?? [] as $customer) {
-            if (strcasecmp((string)($customer['ownerEmail'] ?? ''), $email) === 0) {
-                return $customer;
-            }
-            if ($name !== '' && strcasecmp((string)($customer['name'] ?? ''), $name) === 0) {
+            if (!empty($customer['id']) && strcasecmp((string) ($customer['ownerEmail'] ?? ''), $email) === 0) {
                 return $customer;
             }
         }
         return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Small helpers
+    // -------------------------------------------------------------------------
+
+    public static function autoLinkByEmail(): bool
+    {
+        return defined('ENHANCE_AUTO_LINK_BY_EMAIL') && ENHANCE_AUTO_LINK_BY_EMAIL === true;
+    }
+
+    public function buildOrgName(string $name, string $email, string $company = ''): string
+    {
+        $orgName = trim($company) !== '' ? trim($company) : trim($name);
+        return $orgName !== '' ? $orgName : trim($email);
+    }
+
+    /** True only for a definite "does not exist" answer, never for timeouts/5xx/auth errors. */
+    public function isNotFound(array $resp): bool
+    {
+        return (int) ($resp['_httpCode'] ?? 0) === 404;
+    }
+
+    public function errorText(array $resp): string
+    {
+        $code = (string) ($resp['code'] ?? '');
+        $msg  = (string) ($resp['detail'] ?? $resp['message'] ?? '');
+        $text = trim(($code !== '' ? "[{$code}] " : '') . $msg);
+        return $text !== '' ? $text : substr((string) json_encode($resp), 0, 300);
+    }
+
+    public static function isUuid(string $value): bool
+    {
+        return (bool) preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $value);
     }
 
     // Subscriptions
@@ -506,13 +602,20 @@ class EnhanceApi
         return ($val !== null && $val !== '') ? $val : null;
     }
 
-    public function getServiceSubscriptionId(int $packageId, int $serviceId): ?string
+    private function subscriptionFieldId(int $packageId): ?int
     {
-        $fieldId = Capsule::table('tblcustomfields')
+        $id = Capsule::table('tblcustomfields')
+            ->where('type', 'product')
             ->where('relid', $packageId)
             ->where('fieldname', self::FIELD_SUBSCRIPTION_ID)
             ->value('id');
 
+        return $id ? (int) $id : null;
+    }
+
+    public function getServiceSubscriptionId(int $packageId, int $serviceId): ?string
+    {
+        $fieldId = $this->subscriptionFieldId($packageId);
         if (!$fieldId) return null;
 
         $val = Capsule::table('tblcustomfieldsvalues')
@@ -520,15 +623,13 @@ class EnhanceApi
             ->where('relid', $serviceId)
             ->value('value');
 
-        return ($val !== null && $val !== '') ? $val : null;
+        $val = trim((string) $val);
+        return $val !== '' ? $val : null;
     }
 
     public function saveServiceSubscriptionId(int $packageId, int $serviceId, string $subId): void
     {
-        $fieldId = Capsule::table('tblcustomfields')
-            ->where('relid', $packageId)
-            ->where('fieldname', self::FIELD_SUBSCRIPTION_ID)
-            ->value('id');
+        $fieldId = $this->subscriptionFieldId($packageId);
 
         if (!$fieldId) {
             Capsule::table('tblcustomfields')->insert([
@@ -549,15 +650,35 @@ class EnhanceApi
 
     public function clearServiceSubscriptionId(int $packageId, int $serviceId): void
     {
-        $fieldId = Capsule::table('tblcustomfields')
-            ->where('relid', $packageId)
-            ->where('fieldname', self::FIELD_SUBSCRIPTION_ID)
-            ->value('id');
+        $fieldId = $this->subscriptionFieldId($packageId);
 
         if ($fieldId) {
             Capsule::table('tblcustomfieldsvalues')
                 ->where(['fieldid' => $fieldId, 'relid' => $serviceId])
                 ->delete();
         }
+    }
+
+    /**
+     * WHMCS service IDs (other than $exceptServiceId) whose SUBSCRIPTION_ID equals $subId.
+     * Used so that one Enhance subscription is never guessed onto two WHMCS services.
+     */
+    public function servicesUsingSubscription(string $subId, int $exceptServiceId = 0): array
+    {
+        if (trim($subId) === '') return [];
+
+        $fieldIds = Capsule::table('tblcustomfields')
+            ->where('type', 'product')
+            ->where('fieldname', self::FIELD_SUBSCRIPTION_ID)
+            ->pluck('id')
+            ->all();
+        if (!$fieldIds) return [];
+
+        return array_values(array_map('intval', Capsule::table('tblcustomfieldsvalues')
+            ->whereIn('fieldid', $fieldIds)
+            ->where('value', trim($subId))
+            ->where('relid', '<>', $exceptServiceId)
+            ->pluck('relid')
+            ->all()));
     }
 }

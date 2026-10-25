@@ -753,7 +753,8 @@ function enhance_importer_run_daily_sync(int $serverId, EnhanceApi $api): array
         if (!empty($sub['code'])) continue;
         $newStatus = !empty($sub['isSuspended']) || !empty($sub['suspendedBy']) ? 'Suspended' : 'Active';
         $current = Capsule::table('tblhosting')->where('id',(int)$log->service_id)->value('domainstatus');
-        if ($current && $current !== $newStatus) { Capsule::table('tblhosting')->where('id',(int)$log->service_id)->update(['domainstatus'=>$newStatus]); $updated++; }
+        // Only mirror Active <-> Suspended. Never resurrect Terminated/Cancelled/Pending/Fraud services.
+        if (in_array($current, ['Active', 'Suspended'], true) && $current !== $newStatus) { Capsule::table('tblhosting')->where('id',(int)$log->service_id)->update(['domainstatus'=>$newStatus]); $updated++; }
         enhance_importer_save_service_log($serverId,(string)$log->enhance_org_id,(string)$log->enhance_subscription_id,(int)$log->client_id,(int)$log->service_id,(int)$log->product_id,$newStatus,$sub);
     }
     return ['checked'=>$checked,'updated'=>$updated];

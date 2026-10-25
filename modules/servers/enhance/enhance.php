@@ -1,6 +1,6 @@
 <?php
 /**
- * Enhance WHMCS Server Module v1.0.1
+ * Enhance WHMCS Server Module v1.0.2-insave.1 (based on webdighost v1.0.2)
  *
  * Supports: account creation, suspension, termination, plan change, SSO,
  * admin services tab, dynamic plan dropdown, test connection.
@@ -49,22 +49,36 @@ function _enhance_client_name(array $client): string
     return trim($first . " " . $last);
 }
 
-function _enhance_sync_customer(EnhanceApi $api, array $params): array
+/**
+ * $allowCreate must be true only in CreateAccount. All other module calls work with the
+ * organisation already linked to the client and never create or relink one.
+ */
+function _enhance_sync_customer(EnhanceApi $api, array $params, bool $allowCreate = false): array
 {
     $client = $params["clientsdetails"];
     return $api->syncCustomerFromWhmcs(
         (int) $client["id"],
         _enhance_client_name($client),
         (string) $client["email"],
-        (string) ($client["companyname"] ?? "")
+        (string) ($client["companyname"] ?? ""),
+        $allowCreate
     );
 }
 
-function _enhance_resolve_subscription(EnhanceApi $api, array $params): array
+/**
+ * Finds the Enhance subscription of this WHMCS service.
+ *
+ * 1. Stored SUBSCRIPTION_ID: used if Enhance confirms it. Cleared only on a definite 404,
+ *    never on a timeout/5xx (that used to drop the mapping and fall back to guessing).
+ * 2. Guessing ($allowGuess): only among the client's subscriptions that are NOT already
+ *    mapped to another WHMCS service — otherwise an unprovisioned service could be mapped
+ *    to (and then suspend/terminate) the subscription of another paid service.
+ */
+function _enhance_resolve_subscription(EnhanceApi $api, array $params, bool $allowGuess = true): array
 {
-    $sync = _enhance_sync_customer($api, $params);
+    $sync = _enhance_sync_customer($api, $params, false);
     if (empty($sync["success"]) || empty($sync["orgId"])) {
-        throw new Exception($sync["message"] ?? "Could not sync customer organisation.");
+        throw new Exception($sync["message"] ?? "Could not resolve customer organisation.");
     }
 
     $orgId     = (string) $sync["orgId"];
@@ -72,13 +86,24 @@ function _enhance_resolve_subscription(EnhanceApi $api, array $params): array
     $serviceId = (int) $params["serviceid"];
     $subId     = $api->getServiceSubscriptionId($packageId, $serviceId);
 
-    if ($subId) {
+    if ($subId !== null) {
         $sub = $api->getSubscription($orgId, $subId);
         if (empty($sub["code"])) {
             return ["orgId" => $orgId, "subId" => $subId, "subscription" => $sub, "synced" => $sync];
         }
+        if (!$api->isNotFound($sub)) {
+            throw new Exception("Could not load subscription {$subId}: " . $api->errorText($sub));
+        }
+        if (!$allowGuess) {
+            throw new Exception("Subscription {$subId} was not found in organisation {$orgId} (404).");
+        }
         $api->clearServiceSubscriptionId($packageId, $serviceId);
+        logActivity("Enhance: SUBSCRIPTION_ID {$subId} of service #{$serviceId} returned 404 and was cleared");
         $subId = null;
+    }
+
+    if (!$allowGuess) {
+        throw new Exception("SUBSCRIPTION_ID is empty for service #{$serviceId}; refusing to guess the Enhance subscription.");
     }
 
     $subs = $api->getCustomerSubscriptions($orgId);
@@ -86,24 +111,38 @@ function _enhance_resolve_subscription(EnhanceApi $api, array $params): array
         throw new Exception("Could not list customer subscriptions: " . $err);
     }
 
-    $items = $subs["items"] ?? [];
-    if (count($items) === 1 && !empty($items[0]["id"])) {
-        $subId = (string) $items[0]["id"];
-        $api->saveServiceSubscriptionId($packageId, $serviceId, $subId);
-        return ["orgId" => $orgId, "subId" => $subId, "subscription" => $items[0], "synced" => $sync];
-    }
-
-    $planId = (int) ($params["configoption1"] ?? 0);
-    foreach ($items as $item) {
-        $itemPlanId = (int) ($item["planId"] ?? ($item["plan"]["id"] ?? 0));
-        if ($planId > 0 && $itemPlanId === $planId && !empty($item["id"])) {
-            $subId = (string) $item["id"];
-            $api->saveServiceSubscriptionId($packageId, $serviceId, $subId);
-            return ["orgId" => $orgId, "subId" => $subId, "subscription" => $item, "synced" => $sync];
+    // Candidates: subscriptions of this org that no other WHMCS service already owns.
+    $candidates = [];
+    foreach ($subs["items"] ?? [] as $item) {
+        $id = (string) ($item["id"] ?? "");
+        if ($id !== "" && !$api->servicesUsingSubscription($id, $serviceId)) {
+            $candidates[] = $item;
         }
     }
 
-    throw new Exception("Subscription not found or ambiguous.");
+    if (count($candidates) === 1) {
+        $subId = (string) $candidates[0]["id"];
+        $api->saveServiceSubscriptionId($packageId, $serviceId, $subId);
+        logActivity("Enhance: service #{$serviceId} mapped to the only unmapped subscription {$subId}");
+        return ["orgId" => $orgId, "subId" => $subId, "subscription" => $candidates[0], "synced" => $sync];
+    }
+
+    $planId  = (int) ($params["configoption1"] ?? 0);
+    $byPlan  = [];
+    foreach ($candidates as $item) {
+        $itemPlanId = (int) ($item["planId"] ?? ($item["plan"]["id"] ?? 0));
+        if ($planId > 0 && $itemPlanId === $planId) {
+            $byPlan[] = $item;
+        }
+    }
+    if (count($byPlan) === 1) {
+        $subId = (string) $byPlan[0]["id"];
+        $api->saveServiceSubscriptionId($packageId, $serviceId, $subId);
+        logActivity("Enhance: service #{$serviceId} mapped to subscription {$subId} by plan {$planId}");
+        return ["orgId" => $orgId, "subId" => $subId, "subscription" => $byPlan[0], "synced" => $sync];
+    }
+
+    throw new Exception("Subscription not found or ambiguous: set SUBSCRIPTION_ID on the service manually.");
 }
 
 function _enhance_subscription_is_suspended(array $sub): ?bool
@@ -233,7 +272,11 @@ function enhance_CreateAccount(array $params): string
             return 'Already provisioned — SUBSCRIPTION_ID is already set.';
         }
 
-        $sync = _enhance_sync_customer($api, $params);
+        if ($planId <= 0) {
+            return 'Hosting Package (configoption1) is not set on the product.';
+        }
+
+        $sync = _enhance_sync_customer($api, $params, true);
         if (empty($sync['success']) || empty($sync['orgId'])) {
             return $sync['message'] ?? 'Could not sync customer organisation.';
         }
@@ -338,10 +381,31 @@ function enhance_TerminateAccount(array $params): string
         $api        = _enhance_api($params);
         $packageId  = (int) $params['packageid'];
         $serviceId  = (int) $params['serviceid'];
-        $resolved   = _enhance_resolve_subscription($api, $params);
-        $orgId      = $resolved['orgId'];
-        $subId      = $resolved['subId'];
         $hardDelete = (($params['configoption2'] ?? 'soft') === 'hard');
+
+        // Deleting is irreversible: only the stored SUBSCRIPTION_ID is acted on, never a guess.
+        $storedSubId = $api->getServiceSubscriptionId($packageId, $serviceId);
+        if ($storedSubId === null) {
+            return 'SUBSCRIPTION_ID is empty for this service — refusing to guess which Enhance subscription to delete. '
+                 . 'Set it on the service (or terminate without running the module command).';
+        }
+
+        $sync = _enhance_sync_customer($api, $params, false);
+        if (empty($sync['success']) || empty($sync['orgId'])) {
+            return $sync['message'] ?? 'Could not resolve customer organisation.';
+        }
+        $orgId = (string) $sync['orgId'];
+
+        $sub = $api->getSubscription($orgId, $storedSubId);
+        if ($api->isNotFound($sub)) {
+            // Already gone in Enhance (or belongs to another org): nothing to delete here.
+            $api->clearServiceSubscriptionId($packageId, $serviceId);
+            logActivity("Enhance: terminate service #{$serviceId} — subscription {$storedSubId} not found in org {$orgId} (404), treated as already removed");
+            return 'success';
+        }
+        if ($err = _enhance_api_error($sub)) return $err;
+
+        $subId = $storedSubId;
 
         if ($hardDelete) {
             $sites = $api->listWebsitesBySubscription($orgId, $subId);
@@ -388,8 +452,12 @@ function enhance_ChangePackage(array $params): string
 function enhance_ServiceSingleSignOn(array $params): array
 {
     try {
+        if (isset($params['status']) && $params['status'] !== 'Active') {
+            throw new Exception('The hosting panel is available only for active services.');
+        }
+
         $api  = _enhance_api($params);
-        $sync = _enhance_sync_customer($api, $params);
+        $sync = _enhance_sync_customer($api, $params, false);
         if (empty($sync['success']) || empty($sync['orgId'])) {
             throw new Exception($sync['message'] ?? 'Organisation not found.');
         }
