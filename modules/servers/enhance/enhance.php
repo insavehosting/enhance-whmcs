@@ -452,7 +452,8 @@ function enhance_ChangePackage(array $params): string
 function enhance_ServiceSingleSignOn(array $params): array
 {
     try {
-        if (isset($params['status']) && $params['status'] !== 'Active') {
+        // Clients may open the panel only for Active services; staff (admin area) may always.
+        if (!defined('ADMINAREA') && isset($params['status']) && $params['status'] !== 'Active') {
             throw new Exception('The hosting panel is available only for active services.');
         }
 
