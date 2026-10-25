@@ -41,7 +41,16 @@
 - Daily sync only mirrors Active <-> Suspended and never revives Terminated/Cancelled services.
 - New org: if the Owner membership cannot be created, the org is rolled back.
 - Module log: generated login passwords are masked, one-time SSO URLs are redacted.
-- Client SSO is refused for non-Active services.
+- One welcome e-mail instead of two: the module no longer sends its own "Enhance Panel Access"
+  e-mail and no longer auto-creates that template (it carried EN/PT text). CreateAccount writes the
+  panel login to the service (username = login e-mail, password = generated password only when the
+  login was created by this order, otherwise empty), so the product welcome e-mail shows it via
+  {$service_username}/{$service_password}. Template: docs/welcome-email-template.md.
+- Portuguese leftovers removed (comments, importer status strings, .pt-only domain heuristics;
+  common .ua/.uk/.ro second-level suffixes added).
+- Admin service tab: website resolved from SUBSCRIPTION_ID (WEBSITE_ID was never set, so the tab
+  never showed); references to icon files that do not exist removed.
+- Client SSO is refused for non-Active services (admin area is not restricted).
 - Admin profile widget: actions use the org linked to the client, never an org ID from the request;
   Delete Org is refused while the client has Active/Suspended Enhance services; Link Org validates
   the UUID, checks the org exists and is not linked to another client; no API calls for clients

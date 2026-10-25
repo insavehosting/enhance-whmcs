@@ -145,6 +145,32 @@ function _enhance_resolve_subscription(EnhanceApi $api, array $params, bool $all
     throw new Exception("Subscription not found or ambiguous: set SUBSCRIPTION_ID on the service manually.");
 }
 
+/**
+ * Puts the panel login on the WHMCS service for the product welcome e-mail.
+ * - New panel login (password generated now): username = login e-mail, password = generated one.
+ * - Existing panel login: username = login e-mail, password cleared, so the e-mail can say
+ *   "use your existing password" instead of showing the password WHMCS auto-generated at order time.
+ *   A retry after a partial failure keeps a password stored earlier for the same login.
+ */
+function _enhance_store_credentials(int $serviceId, string $login, string $newPassword): void
+{
+    if ($newPassword !== '' && function_exists('encrypt')) {
+        Capsule::table('tblhosting')->where('id', $serviceId)->update([
+            'username' => $login,
+            'password' => encrypt($newPassword),
+        ]);
+        return;
+    }
+
+    $current = (string) Capsule::table('tblhosting')->where('id', $serviceId)->value('username');
+    if ($current !== $login) {
+        Capsule::table('tblhosting')->where('id', $serviceId)->update([
+            'username' => $login,
+            'password' => '',
+        ]);
+    }
+}
+
 function _enhance_subscription_is_suspended(array $sub): ?bool
 {
     if (array_key_exists("isSuspended", $sub)) return (bool) $sub["isSuspended"];
@@ -281,6 +307,10 @@ function enhance_CreateAccount(array $params): string
             return $sync['message'] ?? 'Could not sync customer organisation.';
         }
         $orgId = $sync['orgId'];
+
+        // Stored right away: if a later step fails and CreateAccount is retried, the password of a
+        // login created now is not lost.
+        _enhance_store_credentials($serviceId, (string) $client['email'], (string) ($sync['password'] ?? ''));
 
         $sub = $api->createSubscription($orgId, $planId);
         if (empty($sub['id'])) {
@@ -483,7 +513,6 @@ function enhance_AdminSingleSignOn(array $params): array
 
         // Server-level admin access in WHMCS is not the same as service/client SSO.
         // For Enhance, the admin button should open the configured Enhance panel directly.
-        // PT: O acesso admin abre diretamente o painel Enhance configurado no servidor.
         if (!preg_match('#^https?://#i', $host)) {
             $host = 'https://' . $host;
         }
@@ -538,22 +567,26 @@ function enhance_ClientArea(array $params): array
 function enhance_AdminServicesTabFields(array $params): array
 {
     try {
-        $api       = _enhance_api($params);
-        $orgId     = $api->getClientOrgId((int) $params['clientsdetails']['id']);
-        $websiteId = $params['customfields']['WEBSITE_ID'] ?? '';
+        $api   = _enhance_api($params);
+        $orgId = $api->getClientOrgId((int) $params['clientsdetails']['id']);
+        $subId = $api->getServiceSubscriptionId((int) $params['packageid'], (int) $params['serviceid']);
+        if (!$orgId || !$subId) return [];
 
-        if (!$orgId || !$websiteId) return [];
+        $sites = $api->listWebsitesBySubscription($orgId, $subId);
+        $site  = $sites['items'][0] ?? null;
+        if (!is_array($site) || empty($site['id'])) return [];
 
-        $site = $api->getWebsite($orgId, $websiteId);
-        if (!isset($site['id'])) return [];
+        $full = $api->getWebsite($orgId, (string) $site['id']);
+        if (isset($full['id'])) $site = $full;
 
-        $color   = htmlspecialchars($site['colorCode']                   ?? '999999', ENT_QUOTES);
-        $status  = htmlspecialchars($site['status']                      ?? 'unknown', ENT_QUOTES);
-        $domain  = htmlspecialchars($site['domain']['domain']            ?? $params['domain'], ENT_QUOTES);
-        $ipv4    = htmlspecialchars($site['serverIps'][0]['ip']          ?? 'N/A', ENT_QUOTES);
-        $ipv6    = htmlspecialchars($site['appServerIpv6']               ?? 'N/A', ENT_QUOTES);
-        $php     = htmlspecialchars($site['phpVersion']                  ?? 'N/A', ENT_QUOTES);
-        $mysql   = htmlspecialchars($site['canUse']['mysqlKind']         ?? 'N/A', ENT_QUOTES);
+        $e      = fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+        $color  = preg_match('/^[0-9a-f]{3,8}$/i', (string) ($site['colorCode'] ?? '')) ? $site['colorCode'] : '999999';
+        $status = $e($site['status'] ?? 'unknown');
+        $domain = $e($site['domain']['domain'] ?? $params['domain']);
+        $ipv4   = $e($site['serverIps'][0]['ip'] ?? 'N/A');
+        $ipv6   = $e($site['appServerIpv6'] ?? 'N/A');
+        $php    = $e($site['phpVersion'] ?? 'N/A');
+        $mysql  = $e($site['canUse']['mysqlKind'] ?? 'N/A');
 
         $html = <<<HTML
 <div style="background:#f2f5ff;border-radius:8px;padding:16px;margin:8px 0;">
@@ -565,13 +598,13 @@ function enhance_AdminServicesTabFields(array $params): array
     <div style="display:flex;flex-wrap:wrap;gap:14px;background:#fff;padding:8px 12px;border-radius:5px;margin-top:8px;">
         <span><strong>IPv4:</strong> {$ipv4}</span>
         <span><strong>IPv6:</strong> {$ipv6}</span>
-        <span><img width="18" src="../modules/servers/enhance/templates/imagens/icones/php.png" style="vertical-align:middle;margin-right:3px;"> {$php}</span>
-        <span><img width="18" src="../modules/servers/enhance/templates/imagens/icones/mysql.png" style="vertical-align:middle;margin-right:3px;"> {$mysql}</span>
+        <span><strong>PHP:</strong> {$php}</span>
+        <span><strong>DB:</strong> {$mysql}</span>
     </div>
 </div>
 HTML;
 
-        return ['Website / Website' => $html];
+        return ['Website' => $html];
     } catch (Exception $e) {
         return [];
     }

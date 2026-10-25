@@ -410,7 +410,7 @@ function enhance_importer_scan_services(EnhanceApi $api, int $serverId): array
                 'productId' => 0,
                 'serviceId' => 0,
                 'matchMode' => 'EnhanceOrgId',
-                'matchConfidence' => 'erro',
+                'matchConfidence' => 'error',
                 'error' => $org['message'] ?? $org['detail'] ?? $org['code'],
             ];
             continue;
@@ -429,7 +429,7 @@ function enhance_importer_scan_services(EnhanceApi $api, int $serverId): array
                 'productId' => 0,
                 'serviceId' => 0,
                 'matchMode' => 'EnhanceOrgId',
-                'matchConfidence' => 'erro',
+                'matchConfidence' => 'error',
                 'error' => $subs['message'] ?? $subs['detail'] ?? $subs['code'],
             ];
             continue;
@@ -500,7 +500,7 @@ function enhance_importer_domain_options_for_subscription(EnhanceApi $api, strin
 
     // 3) Fallback: all websites from the organisation. This is useful when the API does not return
     // all domains through the subscriptionId filter, or when the domain is stored as
-    // alias/addon noutro endpoint.
+    // alias/addon in another endpoint.
     if ($orgId !== '') {
         $allWebsites = $api->listWebsites($orgId, 500);
         if (empty($allWebsites['code'])) {
@@ -600,9 +600,11 @@ function enhance_importer_is_probable_root_domain(string $domain): bool
     $count = count($parts);
     if ($count === 2) return true;
 
-    $twoLevelPt = ['com.pt','net.pt','org.pt','edu.pt','gov.pt','nome.pt','publ.pt'];
+    // Common second-level public suffixes (domain.com.ua is a root domain, not a subdomain).
+    $twoLevel = ['com.ua','net.ua','org.ua','in.ua','kiev.ua','kyiv.ua','co.uk','org.uk','com.ro','org.ro',
+                 'com.pl','com.tr','com.br','com.au','co.il','co.za','com.pt','net.pt','org.pt'];
     $suffix = implode('.', array_slice($parts, -2));
-    if ($count === 3 && in_array($suffix, $twoLevelPt, true)) return true;
+    if ($count === 3 && in_array($suffix, $twoLevel, true)) return true;
 
     return false;
 }

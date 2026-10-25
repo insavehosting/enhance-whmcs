@@ -1,3 +1,18 @@
+# Enhance WHMCS Module — inSave fork
+
+Fork of [webdighost/enhance-whmcs](https://github.com/webdighost/enhance-whmcs) v1.0.2 used on my.insave.hosting.
+What differs from upstream: see [CHANGELOG.md](CHANGELOG.md) (v1.0.2-insave.1). In short:
+
+- Enhance organisations are created only by CreateAccount (never by profile edits, SSO, suspend, terminate).
+- API errors fail closed; Terminate never guesses the subscription.
+- One welcome e-mail: credentials go to the product welcome e-mail via `{$service_username}` / `{$service_password}`
+  — template in [docs/welcome-email-template.md](docs/welcome-email-template.md).
+- `config.php`: `ENHANCE_DEBUG` (off), `ENHANCE_AUTO_LINK_BY_EMAIL` (off).
+
+Upstream README follows.
+
+---
+
 # Enhance WHMCS Module
 
 Version: 1.0.1  

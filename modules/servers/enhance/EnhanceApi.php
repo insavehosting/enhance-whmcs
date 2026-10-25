@@ -16,7 +16,6 @@ class EnhanceApi
     // Custom field / product field names
     const FIELD_CLIENT_ORG_ID    = 'EnhanceOrgId';
     const FIELD_SUBSCRIPTION_ID  = 'SUBSCRIPTION_ID';
-    const EMAIL_TEMPLATE_NAME    = 'Enhance Panel Access';
 
     private string $host;
     private string $masterOrgId;
@@ -38,7 +37,6 @@ class EnhanceApi
         $this->debug       = defined('ENHANCE_DEBUG') && ENHANCE_DEBUG;
 
         $this->clientOrgFieldId = $this->resolveClientOrgField();
-        $this->ensureEmailTemplate();
     }
 
     // -------------------------------------------------------------------------
@@ -60,34 +58,11 @@ class EnhanceApi
             'fieldname'   => self::FIELD_CLIENT_ORG_ID,
             'fieldtype'   => 'text',
             'adminonly'   => 'on',
-            'description' => 'Enhance organisation UUID / Enhance organisation UUID',
+            'description' => 'Enhance customer organisation UUID (set by the Enhance module)',
             'type'        => 'client',
         ]);
 
         return (int) Capsule::connection()->getPdo()->lastInsertId();
-    }
-
-    private function ensureEmailTemplate(): void
-    {
-        $exists = Capsule::table('tblemailtemplates')
-            ->where('type', 'general')
-            ->where('name', self::EMAIL_TEMPLATE_NAME)
-            ->exists();
-
-        if ($exists) return;
-
-        Capsule::table('tblemailtemplates')->insert([
-            'type'     => 'general',
-            'name'     => self::EMAIL_TEMPLATE_NAME,
-            'subject'  => 'Access to Your Hosting Panel / Acesso ao Painel de Hospedagem',
-            'message'  => '<p>Hello {$client_name},</p>'
-                        . '<p><strong>Panel / Painel:</strong> https://{$urlPainel}<br>'
-                        . '<strong>Email:</strong> {$email}<br>'
-                        . '<strong>Password / Senha:</strong> {$password}</p>'
-                        . '<p>Please change your password on first login. / Por favor altere a password no primeiro acesso.</p>',
-            'custom'   => '1',
-            'disabled' => '0',
-        ]);
     }
 
     // -------------------------------------------------------------------------
@@ -213,8 +188,10 @@ class EnhanceApi
     }
 
     /**
-     * Creates customer org + login + owner link + credentials e-mail.
+     * Creates customer org + login + Owner membership.
      * Rolls the org back if the login or the Owner membership cannot be created.
+     * Sends no e-mail: the generated password is returned to CreateAccount, which stores it on the
+     * WHMCS service so the product welcome e-mail ({$service_username}/{$service_password}) carries it.
      * Must only be reached from CreateAccount (see syncCustomerFromWhmcs $allowCreate).
      */
     public function createCustomerOrg(int $whmcsClientId, string $name, string $email, string $company): array
@@ -238,7 +215,7 @@ class EnhanceApi
                     if (empty($member['code'])) {
                         $this->saveClientOrgId($whmcsClientId, $orgId);
                         logActivity("Enhance: organisation {$orgId} created for client #{$whmcsClientId}, existing login linked as Owner (ENHANCE_AUTO_LINK_BY_EMAIL)");
-                        return ['error' => false, 'orgId' => $orgId];
+                        return ['error' => false, 'orgId' => $orgId, 'password' => ''];
                     }
                 }
             }
@@ -256,15 +233,9 @@ class EnhanceApi
 
         $this->saveClientOrgId($whmcsClientId, $orgId);
 
-        localAPI('SendEmail', [
-            'messagename' => self::EMAIL_TEMPLATE_NAME,
-            'id'          => $whmcsClientId,
-            'customvars'  => base64_encode(serialize(['email' => $email, 'password' => $newPass, 'urlPainel' => $this->host])),
-        ]);
-
         logActivity("Enhance: organisation {$orgId} created for client #{$whmcsClientId}");
 
-        return ['error' => false, 'orgId' => $orgId];
+        return ['error' => false, 'orgId' => $orgId, 'password' => $newPass];
     }
 
     /**
@@ -282,8 +253,9 @@ class EnhanceApi
     {
         $orgName = $this->buildOrgName($name, $email, $company);
         $orgId   = $this->getClientOrgId($whmcsClientId);
-        $created = false;
-        $changed = [];
+        $created  = false;
+        $changed  = [];
+        $password = '';
 
         if ($orgId) {
             $org = $this->getOrg($orgId);
@@ -323,6 +295,7 @@ class EnhanceApi
                 return ['success' => false, 'message' => $result['message'] ?? 'Could not create organisation'];
             }
             $orgId     = (string) $result['orgId'];
+            $password  = (string) ($result['password'] ?? '');
             $created   = true;
             $changed[] = 'org_created';
         }
@@ -346,7 +319,8 @@ class EnhanceApi
             }
         }
 
-        return ['success' => true, 'orgId' => $orgId, 'created' => $created, 'changed' => $changed];
+        // 'password' is non-empty only when this call created the panel login.
+        return ['success' => true, 'orgId' => $orgId, 'created' => $created, 'changed' => $changed, 'password' => $password];
     }
 
     /**
