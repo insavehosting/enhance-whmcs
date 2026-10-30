@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.4.0-insave.1 - 2026-10-30
+
+Fork of upstream 1.4.0. Upstream now contains most fixes of 1.0.2-insave.1 (profile edits only rename
+the linked organisation, organisations are created only by Create, Terminate never guesses, API errors
+keep the stored links, passwords and SSO links masked in the module log, daily sync fixed). Kept from
+the fork:
+
+- **One welcome e-mail.** The module sends no e-mail of its own and creates no "Enhance Panel Access"
+  templates; Create does not ask Enhance to mail a password-setting link. The password generated for a
+  new panel login is stored on the service right after the login is created, so the product welcome
+  e-mail shows it (`{$service_password}`) and a retried Create keeps it. For an existing login the
+  password WHMCS generated at order time is cleared. If a retry finds a login created by an interrupted
+  attempt whose password was never stored, Enhance mails the client a password-setting link.
+  See [docs/welcome-email-template.md](docs/welcome-email-template.md).
+- **"Send password reset link"** (service module command, was "Resend panel access") only asks Enhance
+  to mail the owner a password-setting link.
+- **Client SSO only for Active services.** The client area refuses the panel login for Suspended,
+  Pending or Terminated services; admins are not restricted.
+- **Terminate:** a stored subscription that Enhance no longer has (404) counts as removed: the link is
+  cleared and Terminate succeeds instead of failing.
+- **Linking by owner e-mail is off by default.** On Create an existing organisation owned by the
+  client's e-mail is linked only with `ENHANCE_AUTO_LINK_BY_EMAIL` in `config.php`; otherwise a new
+  organisation is created (an existing login with that e-mail becomes its owner).
+- Local test stand: `tests/stand/run.sh` (fake Enhance API over HTTPS, WHMCS stand-ins on SQLite).
+
 ## 1.4.0 - 2026-10-29
 
 ### Client area
