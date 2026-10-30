@@ -101,7 +101,8 @@ function create(int $serviceId): string
 
 // ---------------------------------------------------------------------------
 fake('/__reset', ['master' => MASTER]);
-Capsule::table('tblservers')->insert(['id' => 1, 'name' => 'Enhance', 'type' => 'enhance', 'hostname' => HOST, 'username' => MASTER, 'accesshash' => TOKEN, 'active' => 1]);
+// WHMCS keeps the access hash encrypted in tblservers and passes it decrypted to module calls.
+Capsule::table('tblservers')->insert(['id' => 1, 'name' => 'Enhance', 'type' => 'enhance', 'hostname' => HOST, 'username' => MASTER, 'accesshash' => encrypt(TOKEN), 'active' => 1]);
 Capsule::table('tblproducts')->insert(['id' => 1, 'name' => 'Shared Start', 'servertype' => 'enhance', 'configoption1' => '2', 'configoption2' => 'soft']);
 Capsule::table('tblproducts')->insert(['id' => 2, 'name' => 'VPS', 'servertype' => 'solusvm']);
 
@@ -276,6 +277,16 @@ check('S12 terminate: no stored subscription, refuses to guess', $term !== 'succ
 // --- S13: the e-mail model at the end -------------------------------------------
 check('S13 no WHMCS SendEmail during the whole run', !array_filter($GLOBALS['__stand']['localapi'], fn($c) => $c[0] === 'SendEmail'));
 check('S13 no e-mail templates created during the whole run', Capsule::table('tblemailtemplates')->count() === 0);
+
+// --- S15: API client built from a tblservers row (addon, hooks, daily sync) ----
+$row = Capsule::table('tblservers')->where('id', 1)->first();
+$org = EnhanceApi::fromServerRow($row)->getOrg(MASTER);
+check('S15 server row with an encrypted access hash: authenticated', !EnhanceApi::isError($org) && ($org['id'] ?? '') === MASTER, $org);
+$plainRow = clone $row;
+$plainRow->accesshash = TOKEN;
+$org = EnhanceApi::fromServerRow($plainRow)->getOrg(MASTER);
+check('S15 server row with a plain access hash: authenticated', !EnhanceApi::isError($org) && ($org['id'] ?? '') === MASTER, $org);
+check('S15 no request was rejected with 401 during the run', fake('/__state')['unauthorized'] === [], fake('/__state')['unauthorized']);
 
 // --- S14: auto-link by e-mail, when enabled in config.php --------------------
 define('ENHANCE_AUTO_LINK_BY_EMAIL', true);

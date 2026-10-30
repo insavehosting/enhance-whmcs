@@ -1,7 +1,8 @@
 """Fake Enhance API for the local stand: in-memory state, HTTPS, request log.
 
 Control endpoints (not part of Enhance):
-  POST /__reset {master}            start over with an empty master organisation
+  POST /__reset {master, token}     start over with an empty master organisation; API calls
+                                    without "Authorization: Bearer <token>" get 401
   POST /__seed  {...}               add customers, logins, members, subscriptions
   POST /__fail  {method, path, status, times}
                                     answer the next <times> matching requests with <status>
@@ -23,10 +24,12 @@ LOCK = threading.Lock()
 STATE = {}
 
 
-def reset(master):
+def reset(master, token='stand-api-token'):
     STATE.clear()
     STATE.update({
         'master': master,
+        'token': token,
+        'unauthorized': [],
         'orgs': {master: {'id': master, 'name': 'Master', 'parentId': None, 'ownerId': '', 'isSuspended': False}},
         'members': {master: []},
         'logins': [],
@@ -121,6 +124,9 @@ class Handler(BaseHTTPRequestHandler):
             return 404, {'code': 'not_found'}
         p = path[4:]
         m = s['master']
+        if p != '/version' and self.headers.get('Authorization', '') != 'Bearer ' + s['token']:
+            s['unauthorized'].append(method + ' ' + p)
+            return 401, {'code': 'unauthorized', 'message': 'invalid token'}
 
         if method == 'GET' and p == '/version':
             return 200, '12.26.3'
@@ -255,7 +261,7 @@ class Handler(BaseHTTPRequestHandler):
     def control(self, method, path, body):
         s = STATE
         if path == '/__reset':
-            reset(body.get('master', s['master']))
+            reset(body.get('master', s['master']), body.get('token', 'stand-api-token'))
             return 200, {'ok': True}
         if path == '/__state':
             return 200, s

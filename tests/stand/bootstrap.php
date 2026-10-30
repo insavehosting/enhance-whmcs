@@ -109,7 +109,8 @@ namespace {
     function decrypt($value)
     {
         $value = (string) $value;
-        return strpos($value, 'enc:') === 0 ? base64_decode(substr($value, 4)) : $value;
+        // WHMCS returns nothing usable for a value it did not encrypt.
+        return strpos($value, 'enc:') === 0 ? base64_decode(substr($value, 4)) : '';
     }
 
     function localAPI($command, $args = [], $admin = '')

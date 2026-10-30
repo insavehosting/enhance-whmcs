@@ -1,4 +1,4 @@
-# Enhance for WHMCS - v1.4.0-insave.1
+# Enhance for WHMCS - v1.4.0-insave.2
 
 > **Fork of [webdighost/enhance-whmcs](https://github.com/webdighost/enhance-whmcs) 1.4.0.** Differences:
 > your product welcome e-mail with the panel login, plus Enhance's own password-setting link for a new
