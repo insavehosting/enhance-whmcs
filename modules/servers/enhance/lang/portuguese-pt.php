@@ -132,6 +132,8 @@ return [
     'sso.unavailable'    => 'Não foi possível abrir o painel de controlo neste momento. Tente novamente mais tarde ou contacte o suporte.',
     'sso.inactive'       => 'O painel de controlo só está disponível para serviços ativos.',
     'log.sub_gone_on_terminate' => 'Enhance: a subscrição #:sub do serviço #:service já não existe; associação removida ao terminar.',
+    'log.password_link_sent'   => 'Enhance: link de definição da palavra-passe do serviço #:service enviado para :email.',
+    'log.password_link_failed' => 'Enhance: não foi possível pedir o link de definição da palavra-passe do serviço #:service; use "Enviar link de redefinição da palavra-passe".',
     'sso.no_owner'       => 'A organização não tem titular no Enhance.',
     'sso.owner_inactive' => 'O titular da organização está inativo no Enhance.',
     'sso.failed'         => 'O Enhance não emitiu o link de acesso: :detail',

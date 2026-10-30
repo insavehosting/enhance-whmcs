@@ -403,13 +403,6 @@ function _enhance_create_account(EnhanceApi $api, array $params): string
         }
         $orgId = (string) $sync['orgId'];
 
-        // Fork: a login created now gets its password stored right away, so a retry after a
-        // later failure keeps it for the welcome e-mail.
-        $newPassword = (string) ($sync['password'] ?? '');
-        if ($newPassword !== '') {
-            _enhance_store_new_password($serviceId, (string) ($sync['loginEmail'] ?? ''), $newPassword);
-        }
-
         // Idempotency: reuse the subscription created for this service by an earlier, interrupted attempt.
         $sub = $api->findSubscriptionForService($orgId, $serviceId);
         if ($sub === null) {
@@ -451,7 +444,16 @@ function _enhance_create_account(EnhanceApi $api, array $params): string
             }
         }
 
-        _enhance_store_login_username($api, $serviceId, $orgId, trim((string) ($params['clientsdetails']['email'] ?? '')), $newPassword !== '');
+        _enhance_store_login_username($api, $serviceId, $orgId, trim((string) ($params['clientsdetails']['email'] ?? '')));
+
+        // Fork: a login created by this module gets Enhance's password-setting link, once.
+        // A failure here does not fail Create: "Send password reset link" repeats it.
+        $linkedTo = $api->sendNewLoginPasswordLink($orgId);
+        if (function_exists('logActivity') && $linkedTo !== '') {
+            logActivity($linkedTo === null
+                ? EnhanceLang::t('log.password_link_failed', ['service' => $serviceId])
+                : EnhanceLang::t('log.password_link_sent', ['service' => $serviceId, 'email' => $linkedTo]));
+        }
         return 'success';
     } catch (Throwable $e) {
         return $e->getMessage();
@@ -459,38 +461,18 @@ function _enhance_create_account(EnhanceApi $api, array $params): string
 }
 
 /**
- * Fork: the panel password of a login created by this order, for the product
- * welcome e-mail ({$service_password}). Stored encrypted, as WHMCS stores it.
- */
-function _enhance_store_new_password(int $serviceId, string $login, string $password): void
-{
-    if (!function_exists('encrypt')) return;
-    $data = ['password' => encrypt($password)];
-    if ($login !== '') $data['username'] = $login;
-    Capsule::table('tblhosting')->where('id', $serviceId)->update($data);
-}
-
-/**
  * Shows the Enhance login (the organisation owner's email) as the service
  * username, so support knows which email the client uses in the panel.
- * Fork: when no login was created by this order, the password WHMCS generated at
- * order time is cleared, so the welcome e-mail says "use your current password"
- * instead of showing a password that does not work. A retry keeps a password
- * stored earlier for the same login.
+ * Fork: the password WHMCS generated at order time is cleared; it is not the panel
+ * password and must not reach the welcome e-mail or the client area.
  */
-function _enhance_store_login_username(EnhanceApi $api, int $serviceId, string $orgId, string $fallback = '', bool $passwordSet = false): void
+function _enhance_store_login_username(EnhanceApi $api, int $serviceId, string $orgId, string $fallback = ''): void
 {
     $org = $api->getOrg($orgId);
     $email = EnhanceApi::isError($org) ? '' : trim((string) ($org['ownerEmail'] ?? ''));
     if ($email === '') $email = $fallback;
-    if ($email === '') return;
-    $data = ['username' => $email];
-    if (!$passwordSet) {
-        $current = (string) Capsule::table('tblhosting')->where('id', $serviceId)->value('username');
-        if (strcasecmp($current, $email) !== 0) {
-            $data['password'] = '';
-        }
-    }
+    $data = ['password' => ''];
+    if ($email !== '') $data['username'] = $email;
     Capsule::table('tblhosting')->where('id', $serviceId)->update($data);
 }
 

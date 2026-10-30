@@ -69,6 +69,11 @@ function params(int $serviceId, array $over = []): array
     ], $over);
 }
 
+function links_to(string $email): int
+{
+    return count(array_filter(fake('/__state')['recoveries'], fn($e) => strcasecmp($e, $email) === 0));
+}
+
 function hosting(int $serviceId): object
 {
     return Capsule::table('tblhosting')->where('id', $serviceId)->first();
@@ -134,12 +139,12 @@ $logins = array_values(array_filter(fake('/__state')['logins'], fn($l) => $l['em
 $h = hosting(101);
 check('S1 create: success', $result === 'success', $result);
 check('S1 create: one new login for the client e-mail', count($logins) === 1, $logins);
-check('S1 create: service password = the generated panel password', $logins && decrypt($h->password) === $logins[0]['password'], decrypt($h->password));
+check('S1 create: no password on the service (order-time WHMCS password cleared)', $h->password === '', $h->password);
 check('S1 create: service username = login e-mail', $h->username === 'alice@example.test', $h->username);
 check('S1 create: generated password is masked in the module log',
     $logins && (bool) array_filter($GLOBALS['__stand']['module'], fn($m) => in_array($logins[0]['password'], (array) $m['replace'], true)));
 check('S1 create: subscription and website linked', link_of(101) && link_of(101)->subscription_id && link_of(101)->website_id, link_of(101));
-check('S1 create: no Enhance password-reset mail', fake('/__state')['recoveries'] === [], fake('/__state')['recoveries']);
+check('S1 create: Enhance sends one password-setting link to the new login', links_to('alice@example.test') === 1, fake('/__state')['recoveries']);
 check('S1 create: no WHMCS SendEmail and no template', !array_filter($GLOBALS['__stand']['localapi'], fn($c) => $c[0] === 'SendEmail') && Capsule::table('tblemailtemplates')->count() === 0);
 
 // --- S2: second service of the same client ----------------------------------
@@ -148,7 +153,8 @@ $loginsBefore = count(fake('/__state')['logins']);
 $result = create(102);
 $h = hosting(102);
 check('S2 second service: success, no new login', $result === 'success' && count(fake('/__state')['logins']) === $loginsBefore, $result);
-check('S2 second service: password cleared ("use your current password")', $h->password === '', $h->password);
+check('S2 second service: no password on the service', $h->password === '', $h->password);
+check('S2 second service: no second password-setting link', links_to('alice@example.test') === 1, fake('/__state')['recoveries']);
 check('S2 second service: username = login e-mail', $h->username === 'alice@example.test', $h->username);
 
 // --- S3: the client's e-mail already has a panel login ----------------------
@@ -160,7 +166,8 @@ $state = fake('/__state');
 $org = $state['orgs'][org_of(2)] ?? [];
 check('S3 existing login: success, linked as owner of a new organisation', $result === 'success' && $org && org_of(2) !== null, $result);
 check('S3 existing login: no second login created', count(array_filter($state['logins'], fn($l) => $l['email'] === 'bob@example.test')) === 1);
-check('S3 existing login: password cleared', hosting(201)->password === '', hosting(201)->password);
+check('S3 existing login: no password on the service', hosting(201)->password === '', hosting(201)->password);
+check('S3 existing login (not created by the module): no password-setting link', links_to('bob@example.test') === 0, fake('/__state')['recoveries']);
 
 // --- S4: organisation owned by the e-mail exists outside WHMCS (auto-link off)
 $outsideOrg = '44444444-4444-4444-8444-444444444444';
@@ -173,19 +180,18 @@ client(3, 'carol@example.test', 'Carol', 'Poe');
 service(301, 3, 'carol.example');
 $result = create(301);
 check('S4 auto-link off: a new organisation, not the outside one', $result === 'success' && org_of(3) !== null && org_of(3) !== $outsideOrg, org_of(3));
+check('S4 existing login of an outside organisation: no password-setting link', links_to('carol@example.test') === 0, fake('/__state')['recoveries']);
 
 // --- S5: retry after a failure that follows the login creation --------------
 fake('/__fail', ['method' => 'POST', 'path' => '/api/orgs/' . MASTER . '/customers/[^/]+/subscriptions', 'status' => 500, 'times' => 1]);
 client(4, 'dave@example.test', 'Dave', 'Moe');
 service(401, 4, 'dave.example');
 $first = create(401);
-$passwordAfterFailure = decrypt(hosting(401)->password);
+$linksAfterFailure = links_to('dave@example.test');
 $second = create(401);
-$dave = array_values(array_filter(fake('/__state')['logins'], fn($l) => $l['email'] === 'dave@example.test'));
-check('S5 retry: first attempt fails', $first !== 'success', $first);
-check('S5 retry: password stored before the failure', $dave && $passwordAfterFailure === $dave[0]['password'], $passwordAfterFailure);
-check('S5 retry: second attempt succeeds and keeps the password', $second === 'success' && $dave && decrypt(hosting(401)->password) === $dave[0]['password'], [$second, decrypt(hosting(401)->password)]);
-check('S5 retry: no password-reset mail', !in_array('dave@example.test', fake('/__state')['recoveries'], true));
+check('S5 retry: first attempt fails, no link yet', $first !== 'success' && $linksAfterFailure === 0, [$first, $linksAfterFailure]);
+check('S5 retry: second attempt succeeds and sends the link once', $second === 'success' && links_to('dave@example.test') === 1, [$second, fake('/__state')['recoveries']]);
+check('S5 retry: no password on the service', hosting(401)->password === '', hosting(401)->password);
 
 // --- S6: login created, then owner membership fails (password never stored) -
 fake('/__fail', ['method' => 'POST', 'path' => '/api/orgs/[^/]+/members', 'status' => 500, 'times' => 1]);
@@ -194,8 +200,10 @@ service(501, 5, 'erin.example');
 $first = create(501);
 $second = create(501);
 check('S6 interrupted login: first attempt fails', $first !== 'success', $first);
-check('S6 interrupted login: retry succeeds, password left empty', $second === 'success' && hosting(501)->password === '', [$second, hosting(501)->password]);
-check('S6 interrupted login: Enhance sends the password-setting link', in_array('erin@example.test', fake('/__state')['recoveries'], true), fake('/__state')['recoveries']);
+check('S6 interrupted login: retry succeeds, no password on the service', $second === 'success' && hosting(501)->password === '', [$second, hosting(501)->password]);
+check('S6 interrupted login: Enhance sends the password-setting link once', links_to('erin@example.test') === 1, fake('/__state')['recoveries']);
+service(502, 5, 'erin-two.example');
+check('S6 later plan of the same client: no second link', create(502) === 'success' && links_to('erin@example.test') === 1, fake('/__state')['recoveries']);
 
 // --- S7: profile edits ------------------------------------------------------
 client(6, 'frank@example.test', 'Frank', 'Noe');
@@ -239,7 +247,7 @@ check('S9 unsuspend: subscription active again', $unsuspend === 'success' && emp
 // --- S10: resend access = Enhance's own reset link only ------------------------
 $sendBefore = count(array_filter($GLOBALS['__stand']['localapi'], fn($c) => $c[0] === 'SendEmail'));
 $resend = enhance_ResendAccess(params(102));
-check('S10 resend access: Enhance reset link to the login e-mail', $resend === 'success' && in_array('alice@example.test', fake('/__state')['recoveries'], true), [$resend, fake('/__state')['recoveries']]);
+check('S10 resend access: one more Enhance reset link to the login e-mail', $resend === 'success' && links_to('alice@example.test') === 2, [$resend, fake('/__state')['recoveries']]);
 check('S10 resend access: no WHMCS e-mail', count(array_filter($GLOBALS['__stand']['localapi'], fn($c) => $c[0] === 'SendEmail')) === $sendBefore);
 
 // --- S11: daily sync ----------------------------------------------------------

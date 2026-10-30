@@ -567,8 +567,6 @@ class EnhanceApi
         $orgId   = $this->getClientOrgId($whmcsClientId);
         $created = false;
         $changed = [];
-        $newPassword = '';
-        $loginEmail  = '';
 
         if ($orgId) {
             $org = $this->getOrg($orgId);
@@ -659,7 +657,6 @@ class EnhanceApi
                     }
                 } elseif (!self::isError($login) && !empty($login['id'])) {
                     $newLogin = true;
-                    $newPassword = $password;
                     self::rememberCreatedLogin((string) $login['id']);
                 }
                 if (self::isError($login) || empty($login['id'])) {
@@ -675,20 +672,11 @@ class EnhanceApi
                 return ['success' => false, 'message' => EnhanceLang::t('org.owner_failed', ['org' => $orgId, 'detail' => self::errorSummary($linked)])];
             }
             $changed[] = $newLogin ? 'owner_created' : 'existing_login_linked_as_owner';
-            $loginEmail = $email;
-            if ($newLogin && $newPassword === '') {
-                // Fork: the login comes from an earlier, interrupted attempt and its password
-                // was never stored; Enhance e-mails the client a link to set one.
-                $this->triggerPasswordRecovery($email);
-                $changed[] = 'password_link_sent';
-            }
-            // Fork: the module sends no e-mail of its own (Enhance's link only in the case above).
-            // A password generated now goes back to CreateAccount, which stores it on the
-            // service for the product welcome e-mail ({$service_password}).
+            // Fork: no e-mail here. The generated password is never stored or sent; once Create
+            // has succeeded, sendNewLoginPasswordLink() asks Enhance for its password-setting link.
         }
 
-        return ['success' => true, 'orgId' => $orgId, 'created' => $created, 'changed' => $changed,
-                'password' => $newPassword, 'loginEmail' => $loginEmail];
+        return ['success' => true, 'orgId' => $orgId, 'created' => $created, 'changed' => $changed];
     }
 
     /**
@@ -1019,6 +1007,33 @@ class EnhanceApi
      * 200 even when no login has this email. POST on the same path finishes a
      * recovery with the emailed secret and must not be used here.
      */
+    /**
+     * Fork: asks Enhance to e-mail its password-setting link to the owner of $orgId,
+     * once, and only when this module created that login. Called after a successful
+     * Create, so a retry after a failure still sends it and a later plan does not.
+     * @return string e-mail the link went to, '' when no link was due, or null on an API error
+     */
+    public function sendNewLoginPasswordLink(string $orgId): ?string
+    {
+        $owner = $this->findOwnerMember($orgId);
+        $loginId = (string) ($owner['loginId'] ?? '');
+        if ($loginId === '' || !self::wasCreatedByModule($loginId) || self::passwordLinkSent($loginId)) {
+            return '';
+        }
+        $org = $this->getOrg($orgId);
+        $email = self::isError($org) ? '' : trim((string) ($org['ownerEmail'] ?? ''));
+        if ($email === '') return null;
+        if (self::isError($this->triggerPasswordRecovery($email))) return null;
+        \WHMCS\TransientData::getInstance()->store('enhance_password_link_' . md5(strtolower($loginId)), '1', 30 * 86400);
+        return $email;
+    }
+
+    private static function passwordLinkSent(string $loginId): bool
+    {
+        if (!class_exists('WHMCS\\TransientData')) return true;
+        return (string) \WHMCS\TransientData::getInstance()->retrieve('enhance_password_link_' . md5(strtolower($loginId))) === '1';
+    }
+
     public function triggerPasswordRecovery(string $email): array
     {
         return $this->send('PUT', '/login/password-recovery', ['email' => $email]);

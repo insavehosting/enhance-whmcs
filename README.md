@@ -1,8 +1,8 @@
 # Enhance for WHMCS - v1.4.0-insave.1
 
 > **Fork of [webdighost/enhance-whmcs](https://github.com/webdighost/enhance-whmcs) 1.4.0.** Differences:
-> one product welcome e-mail with the panel login and, for a new login, its password (the module sends
-> no e-mail of its own); client SSO only for Active services; Terminate treats a subscription already
+> your product welcome e-mail with the panel login, plus Enhance's own password-setting link for a new
+> login (the module sends no e-mail of its own and never stores a password); client SSO only for Active services; Terminate treats a subscription already
 > deleted in Enhance as removed; linking an organisation by owner e-mail is off unless
 > `ENHANCE_AUTO_LINK_BY_EMAIL` is set. Details: [CHANGELOG.md](CHANGELOG.md),
 > [docs/welcome-email-template.md](docs/welcome-email-template.md). Releases of the fork:

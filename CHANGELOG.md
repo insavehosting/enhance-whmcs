@@ -7,12 +7,13 @@ the linked organisation, organisations are created only by Create, Terminate nev
 keep the stored links, passwords and SSO links masked in the module log, daily sync fixed). Kept from
 the fork:
 
-- **One welcome e-mail.** The module sends no e-mail of its own and creates no "Enhance Panel Access"
-  templates; Create does not ask Enhance to mail a password-setting link. The password generated for a
-  new panel login is stored on the service right after the login is created, so the product welcome
-  e-mail shows it (`{$service_password}`) and a retried Create keeps it. For an existing login the
-  password WHMCS generated at order time is cleared. If a retry finds a login created by an interrupted
-  attempt whose password was never stored, Enhance mails the client a password-setting link.
+- **Your welcome e-mail plus Enhance's password link.** The module sends no e-mail of its own and
+  creates no "Enhance Panel Access" templates; the product welcome e-mail carries the panel address and
+  login (`{$service_username}`, the owner's e-mail). No password is stored or e-mailed: the password
+  WHMCS generated at order time is cleared from the service. After a successful Create, a login this
+  module created gets Enhance's password-setting link, once — also when an earlier attempt failed after
+  creating the login; a later plan of the same client gets none. Upstream sent its link while linking
+  the owner, so a Create that failed after that point never sent it on retry.
   See [docs/welcome-email-template.md](docs/welcome-email-template.md).
 - **"Send password reset link"** (service module command, was "Resend panel access") only asks Enhance
   to mail the owner a password-setting link.

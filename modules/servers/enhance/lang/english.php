@@ -132,6 +132,8 @@ return [
     'sso.unavailable'    => 'Could not open the control panel right now. Please try again later or contact support.',
     'sso.inactive'       => 'The control panel is available only for active services.',
     'log.sub_gone_on_terminate' => 'Enhance: subscription #:sub of service #:service no longer exists; link removed on Terminate.',
+    'log.password_link_sent'   => 'Enhance: password-setting link for service #:service sent to :email.',
+    'log.password_link_failed' => 'Enhance: could not request the password-setting link for service #:service; use "Send password reset link".',
     'sso.no_owner'       => 'The organisation has no owner in Enhance.',
     'sso.owner_inactive' => 'The organisation owner is inactive in Enhance.',
     'sso.failed'         => 'Enhance did not issue the access link: :detail',
