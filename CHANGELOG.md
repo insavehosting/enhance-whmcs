@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0-insave.2 - 2026-10-31
+
+- **Fixed: 401 from Enhance in the Enhance Manager addon, the client profile panel, profile edits and the
+  daily sync, while Test Connection on the server worked.** These build the API client from the
+  `tblservers` row, where WHMCS may keep the access hash encrypted; module functions receive it
+  decrypted as `serveraccesshash`. The row's access hash is now decrypted first and used as stored only
+  when it does not decrypt to printable text. Upstream 1.4.0 and 1.0.2-insave.1 have the same problem.
+- Test stand: the fake API checks the bearer token; the server row keeps the access hash encrypted.
+
 ## 1.4.0-insave.1 - 2026-10-30
 
 Fork of upstream 1.4.0. Upstream now contains most fixes of 1.0.2-insave.1 (profile edits only rename

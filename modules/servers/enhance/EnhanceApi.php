@@ -29,7 +29,7 @@ use WHMCS\Database\Capsule;
 
 class EnhanceApi
 {
-    const VERSION                = '1.4.0-insave.1';
+    const VERSION                = '1.4.0-insave.2';
     const MODULE                 = 'enhance';
     const FIELD_CLIENT_ORG_ID    = 'EnhanceOrgId';
     const FIELD_SUBSCRIPTION_ID  = 'SUBSCRIPTION_ID';
@@ -100,7 +100,7 @@ class EnhanceApi
             $host = (string) ($row->ipaddress ?? '');
         }
         [$token, $source, $alternative] = self::pickToken(
-            (string) ($row->accesshash ?? ''),
+            self::decryptAccessHash((string) ($row->accesshash ?? '')),
             self::decryptPassword((string) ($row->password ?? ''))
         );
         $api = new self($host, (string) ($row->username ?? ''), $token, (int) ($row->id ?? 0), $source);
@@ -129,6 +129,20 @@ class EnhanceApi
             return [$accessHash, 'accesshash', $password !== $accessHash ? $password : ''];
         }
         return [$password, 'password', ''];
+    }
+
+    /**
+     * Fork: the access hash of a tblservers row as module calls receive it. WHMCS
+     * passes "serveraccesshash" to module functions decrypted, but the column may
+     * hold it encrypted, so the addon, the hooks and the daily sync sent the
+     * ciphertext and Enhance answered 401. A value that does not decrypt to
+     * printable text is used as stored.
+     */
+    private static function decryptAccessHash(string $stored): string
+    {
+        if ($stored === '') return '';
+        $plain = self::decryptPassword($stored);
+        return ($plain !== '' && preg_match('/^[\x20-\x7e]+$/', $plain)) ? $plain : $stored;
     }
 
     private static function decryptPassword(string $encrypted): string
