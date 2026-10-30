@@ -43,3 +43,7 @@ if (!defined('ENHANCE_DEBUG')) define('ENHANCE_DEBUG', false);
 
 // Backup restore by clients (also needs the option in each product)
 // define('ENHANCE_CLIENTAREA_RESTORE', true);
+
+// Fork: on Create, link an existing Enhance organisation owned by the client's e-mail
+// instead of creating a new one. Off by default.
+// define('ENHANCE_AUTO_LINK_BY_EMAIL', true);

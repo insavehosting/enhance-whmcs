@@ -33,7 +33,6 @@ class EnhanceStore
     const LEGACY_ORG_FIELDS = ['EnhanceOrgId', 'enhOrgId'];
     /** Product fields holding the subscription: this module 1.x and the official module (>= 1.1 and < 1.1). */
     const LEGACY_SUB_FIELDS = ['SUBSCRIPTION_ID', 'enhanceSubscriptionId', 'subscriptionId'];
-    const EMAIL_TEMPLATE = 'Enhance Panel Access';
 
     private static bool $ready = false;
     private static ?int $orgFieldId = null;
@@ -92,7 +91,6 @@ class EnhanceStore
         $done = Capsule::table('tblconfiguration')->where('setting', self::SETTING)->value('value');
         if ($done !== self::VERSION) {
             self::clientOrgFieldId();
-            self::ensureEmailTemplate();
             if (self::migrateLegacy()) {
                 if ($done === null) {
                     Capsule::table('tblconfiguration')->insert(['setting' => self::SETTING, 'value' => self::VERSION]);
@@ -394,36 +392,6 @@ class EnhanceStore
             ]);
         }
         return self::$orgFieldId = (int) $id;
-    }
-
-    /**
-     * Creates the "Enhance Panel Access" general email template (English master)
-     * and its European Portuguese translation, when missing.
-     * Merge fields: {$panel_url}, {$login_email}, {$new_login}.
-     */
-    public static function ensureEmailTemplate(): void
-    {
-        $name = self::EMAIL_TEMPLATE;
-        $templates = [
-            ''              => 'english',
-            'portuguese-pt' => 'portuguese-pt',
-        ];
-        foreach ($templates as $language => $dictionary) {
-            $query = Capsule::table('tblemailtemplates')->where('type', 'general')->where('name', $name);
-            $language === '' ? $query->where(function ($q) { $q->where('language', '')->orWhereNull('language'); }) : $query->where('language', $language);
-            if ($query->exists()) continue;
-
-            Capsule::table('tblemailtemplates')->insert([
-                'type'     => 'general',
-                'name'     => $name,
-                'subject'  => EnhanceLang::t('email.subject', [], $dictionary),
-                'message'  => EnhanceLang::t('email.body', [], $dictionary),
-                'language' => $language,
-                'custom'   => 1,
-                'disabled' => 0,
-                'plaintext'=> 0,
-            ]);
-        }
     }
 
     // -------------------------------------------------------------------------

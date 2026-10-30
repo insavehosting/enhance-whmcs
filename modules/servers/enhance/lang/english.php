@@ -119,18 +119,19 @@ return [
     'svc.recalc_failed'         => 'The recalculation in Enhance failed: :detail',
     'svc.usage_read_failed'     => 'Recalculation requested, but the usage could not be read.',
     'svc.no_owner_email'        => 'The organisation has no owner with an email address in Enhance.',
-    'svc.recovery_failed'       => 'The access email was sent, but the password-setting request failed: :detail',
-    'svc.email_failed'          => 'The password-setting link was requested from Enhance, but the WHMCS email failed: :detail',
+    'svc.recovery_failed'       => 'Enhance did not accept the password reset request: :detail',
 
     // Admin buttons
     'btn.sync_state'     => 'Sync status',
     'btn.refresh_usage'  => 'Refresh usage',
-    'btn.resend_access'  => 'Resend panel access',
+    'btn.resend_access'  => 'Send password reset link',
     'admin.login_to_panel' => 'Log in to Panel',
 
     // SSO
     'sso.not_linked'     => 'This account is not linked to the control panel yet. Please contact support.',
     'sso.unavailable'    => 'Could not open the control panel right now. Please try again later or contact support.',
+    'sso.inactive'       => 'The control panel is available only for active services.',
+    'log.sub_gone_on_terminate' => 'Enhance: subscription #:sub of service #:service no longer exists; link removed on Terminate.',
     'sso.no_owner'       => 'The organisation has no owner in Enhance.',
     'sso.owner_inactive' => 'The organisation owner is inactive in Enhance.',
     'sso.failed'         => 'Enhance did not issue the access link: :detail',
@@ -208,15 +209,6 @@ return [
     'ca.redirect_note'      => 'You will be securely redirected to your control panel.',
 
     // Email template "Enhance Panel Access" (created once; edit it in WHMCS > Email Templates)
-    'email.subject' => 'Your hosting control panel access',
-    'email.body'    => '<p>Dear {$client_name},</p>'
-        . '<p>Your hosting control panel account is active.</p>'
-        . '<p><strong>Control panel:</strong> {$panel_url}<br>'
-        . '<strong>Login email:</strong> {$login_email}</p>'
-        . '{if $new_login}<p>For security reasons we never send passwords by email. You will shortly receive a separate message with a link to set your password.</p>'
-        . '{else}<p>This email address already had access to the control panel. Keep using your current password. If you do not remember it, use the password recovery option on the panel login page.</p>{/if}'
-        . '<p>You can also open the control panel without a password from our client area, on the service page: {$whmcs_url}clientarea.php?action=services</p>'
-        . '<p>{$signature}</p>',
 
     // Admin client profile widget
     'widget.bad_token'        => 'Invalid or expired security token. Reload the page and try again.',

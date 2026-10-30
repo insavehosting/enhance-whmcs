@@ -29,11 +29,10 @@ use WHMCS\Database\Capsule;
 
 class EnhanceApi
 {
-    const VERSION                = '1.4.0';
+    const VERSION                = '1.4.0-insave.1';
     const MODULE                 = 'enhance';
     const FIELD_CLIENT_ORG_ID    = 'EnhanceOrgId';
     const FIELD_SUBSCRIPTION_ID  = 'SUBSCRIPTION_ID';
-    const EMAIL_TEMPLATE_NAME    = EnhanceStore::EMAIL_TEMPLATE;
     const FRIENDLY_NAME_PREFIX   = 'WHMCS #';
 
     private string $host;
@@ -205,35 +204,6 @@ class EnhanceApi
     public function clientOrgFieldId(): int
     {
         return EnhanceStore::clientOrgFieldId();
-    }
-
-    // -------------------------------------------------------------------------
-    // Access email
-    // -------------------------------------------------------------------------
-
-    /**
-     * Sends the panel access email (never a password) and, for new logins,
-     * asks Enhance to send its own password-setting link.
-     */
-    public function sendAccessEmail(int $whmcsClientId, string $email, bool $newLogin): array
-    {
-        EnhanceStore::ensureEmailTemplate();
-        $recovery = $newLogin ? $this->triggerPasswordRecovery($email) : ['_httpCode' => 200];
-        $mail = function_exists('localAPI') ? localAPI('SendEmail', [
-            'messagename' => self::EMAIL_TEMPLATE_NAME,
-            'id'          => $whmcsClientId,
-            'customvars'  => base64_encode(serialize([
-                'panel_url'   => $this->getPanelUrl(),
-                'login_email' => $email,
-                'new_login'   => $newLogin ? 1 : 0,
-            ])),
-        ]) : ['result' => 'success'];
-
-        return [
-            'recovery' => !self::isError($recovery),
-            'email'    => ($mail['result'] ?? '') === 'success',
-            'message'  => self::isError($recovery) ? 'Enhance: ' . self::errorSummary($recovery) : (string) ($mail['message'] ?? ''),
-        ];
     }
 
     // -------------------------------------------------------------------------
@@ -597,6 +567,8 @@ class EnhanceApi
         $orgId   = $this->getClientOrgId($whmcsClientId);
         $created = false;
         $changed = [];
+        $newPassword = '';
+        $loginEmail  = '';
 
         if ($orgId) {
             $org = $this->getOrg($orgId);
@@ -614,7 +586,10 @@ class EnhanceApi
             }
         }
 
-        if (!$orgId) {
+        // Fork: linking an existing organisation by the owner's e-mail is off unless
+        // ENHANCE_AUTO_LINK_BY_EMAIL is set in config.php. A client who changes the e-mail
+        // in WHMCS could otherwise be given an organisation created outside WHMCS.
+        if (!$orgId && defined('ENHANCE_AUTO_LINK_BY_EMAIL') && ENHANCE_AUTO_LINK_BY_EMAIL) {
             $match = $this->findCustomerOrgByEmail($email);
             if (!empty($match['error'])) {
                 return ['success' => false, 'message' => $match['message']];
@@ -684,6 +659,7 @@ class EnhanceApi
                     }
                 } elseif (!self::isError($login) && !empty($login['id'])) {
                     $newLogin = true;
+                    $newPassword = $password;
                     self::rememberCreatedLogin((string) $login['id']);
                 }
                 if (self::isError($login) || empty($login['id'])) {
@@ -699,11 +675,20 @@ class EnhanceApi
                 return ['success' => false, 'message' => EnhanceLang::t('org.owner_failed', ['org' => $orgId, 'detail' => self::errorSummary($linked)])];
             }
             $changed[] = $newLogin ? 'owner_created' : 'existing_login_linked_as_owner';
-            // The password is never emailed: Enhance sends its own link to set it.
-            $this->sendAccessEmail($whmcsClientId, $email, $newLogin);
+            $loginEmail = $email;
+            if ($newLogin && $newPassword === '') {
+                // Fork: the login comes from an earlier, interrupted attempt and its password
+                // was never stored; Enhance e-mails the client a link to set one.
+                $this->triggerPasswordRecovery($email);
+                $changed[] = 'password_link_sent';
+            }
+            // Fork: the module sends no e-mail of its own (Enhance's link only in the case above).
+            // A password generated now goes back to CreateAccount, which stores it on the
+            // service for the product welcome e-mail ({$service_password}).
         }
 
-        return ['success' => true, 'orgId' => $orgId, 'created' => $created, 'changed' => $changed];
+        return ['success' => true, 'orgId' => $orgId, 'created' => $created, 'changed' => $changed,
+                'password' => $newPassword, 'loginEmail' => $loginEmail];
     }
 
     /**

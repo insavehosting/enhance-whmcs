@@ -119,18 +119,19 @@ return [
     'svc.recalc_failed'         => 'O recálculo no Enhance falhou: :detail',
     'svc.usage_read_failed'     => 'Recálculo pedido, mas não foi possível ler a utilização.',
     'svc.no_owner_email'        => 'A organização não tem titular com endereço de email no Enhance.',
-    'svc.recovery_failed'       => 'O email de acesso foi enviado, mas o pedido de definição de palavra-passe falhou: :detail',
-    'svc.email_failed'          => 'O link de definição de palavra-passe foi pedido ao Enhance, mas o email do WHMCS falhou: :detail',
+    'svc.recovery_failed'       => 'O Enhance não aceitou o pedido de redefinição da palavra-passe: :detail',
 
     // Botões de administração
     'btn.sync_state'     => 'Sincronizar estado',
     'btn.refresh_usage'  => 'Atualizar utilização',
-    'btn.resend_access'  => 'Reenviar acesso ao painel',
+    'btn.resend_access'  => 'Enviar link de redefinição da palavra-passe',
     'admin.login_to_panel' => 'Entrar no Painel',
 
     // SSO
     'sso.not_linked'     => 'Esta conta ainda não está associada ao painel de controlo. Contacte o suporte.',
     'sso.unavailable'    => 'Não foi possível abrir o painel de controlo neste momento. Tente novamente mais tarde ou contacte o suporte.',
+    'sso.inactive'       => 'O painel de controlo só está disponível para serviços ativos.',
+    'log.sub_gone_on_terminate' => 'Enhance: a subscrição #:sub do serviço #:service já não existe; associação removida ao terminar.',
     'sso.no_owner'       => 'A organização não tem titular no Enhance.',
     'sso.owner_inactive' => 'O titular da organização está inativo no Enhance.',
     'sso.failed'         => 'O Enhance não emitiu o link de acesso: :detail',
@@ -208,15 +209,6 @@ return [
     'ca.redirect_note'      => 'Será redirecionado em segurança para o seu painel de alojamento.',
 
     // Modelo de email "Enhance Panel Access" (criado uma vez; edite-o em WHMCS > Modelos de Email)
-    'email.subject' => 'Acesso ao painel de alojamento',
-    'email.body'    => '<p>Caro(a) {$client_name},</p>'
-        . '<p>A sua conta no painel de alojamento está ativa.</p>'
-        . '<p><strong>Painel de controlo:</strong> {$panel_url}<br>'
-        . '<strong>Email de acesso:</strong> {$login_email}</p>'
-        . '{if $new_login}<p>Por razões de segurança, não enviamos palavras-passe por email. Vai receber em breve uma mensagem separada com um link para definir a sua palavra-passe.</p>'
-        . '{else}<p>Este endereço de email já tinha acesso ao painel. Continue a usar a palavra-passe atual. Caso não a recorde, utilize a opção de recuperação de palavra-passe na página de entrada do painel.</p>{/if}'
-        . '<p>Também pode entrar no painel sem palavra-passe a partir da área de cliente, na página do serviço: {$whmcs_url}clientarea.php?action=services</p>'
-        . '<p>{$signature}</p>',
 
     // Painel no perfil do cliente (administração)
     'widget.bad_token'        => 'Token de segurança inválido ou expirado. Recarregue a página e tente novamente.',

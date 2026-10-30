@@ -403,6 +403,13 @@ function _enhance_create_account(EnhanceApi $api, array $params): string
         }
         $orgId = (string) $sync['orgId'];
 
+        // Fork: a login created now gets its password stored right away, so a retry after a
+        // later failure keeps it for the welcome e-mail.
+        $newPassword = (string) ($sync['password'] ?? '');
+        if ($newPassword !== '') {
+            _enhance_store_new_password($serviceId, (string) ($sync['loginEmail'] ?? ''), $newPassword);
+        }
+
         // Idempotency: reuse the subscription created for this service by an earlier, interrupted attempt.
         $sub = $api->findSubscriptionForService($orgId, $serviceId);
         if ($sub === null) {
@@ -444,7 +451,7 @@ function _enhance_create_account(EnhanceApi $api, array $params): string
             }
         }
 
-        _enhance_store_login_username($api, $serviceId, $orgId);
+        _enhance_store_login_username($api, $serviceId, $orgId, trim((string) ($params['clientsdetails']['email'] ?? '')), $newPassword !== '');
         return 'success';
     } catch (Throwable $e) {
         return $e->getMessage();
@@ -452,16 +459,39 @@ function _enhance_create_account(EnhanceApi $api, array $params): string
 }
 
 /**
+ * Fork: the panel password of a login created by this order, for the product
+ * welcome e-mail ({$service_password}). Stored encrypted, as WHMCS stores it.
+ */
+function _enhance_store_new_password(int $serviceId, string $login, string $password): void
+{
+    if (!function_exists('encrypt')) return;
+    $data = ['password' => encrypt($password)];
+    if ($login !== '') $data['username'] = $login;
+    Capsule::table('tblhosting')->where('id', $serviceId)->update($data);
+}
+
+/**
  * Shows the Enhance login (the organisation owner's email) as the service
  * username, so support knows which email the client uses in the panel.
+ * Fork: when no login was created by this order, the password WHMCS generated at
+ * order time is cleared, so the welcome e-mail says "use your current password"
+ * instead of showing a password that does not work. A retry keeps a password
+ * stored earlier for the same login.
  */
-function _enhance_store_login_username(EnhanceApi $api, int $serviceId, string $orgId): void
+function _enhance_store_login_username(EnhanceApi $api, int $serviceId, string $orgId, string $fallback = '', bool $passwordSet = false): void
 {
     $org = $api->getOrg($orgId);
     $email = EnhanceApi::isError($org) ? '' : trim((string) ($org['ownerEmail'] ?? ''));
-    if ($email !== '') {
-        Capsule::table('tblhosting')->where('id', $serviceId)->update(['username' => $email]);
+    if ($email === '') $email = $fallback;
+    if ($email === '') return;
+    $data = ['username' => $email];
+    if (!$passwordSet) {
+        $current = (string) Capsule::table('tblhosting')->where('id', $serviceId)->value('username');
+        if (strcasecmp($current, $email) !== 0) {
+            $data['password'] = '';
+        }
     }
+    Capsule::table('tblhosting')->where('id', $serviceId)->update($data);
 }
 
 // =============================================================================
@@ -556,6 +586,21 @@ function _enhance_run_TerminateAccount(array $params): string
         $serviceId  = (int) $params['serviceid'];
         $hardDelete = (($params['configoption2'] ?? 'soft') === 'hard');
 
+        // Fork: a stored subscription that Enhance no longer has (404) counts as removed.
+        $storedSub = $api->getServiceSubscriptionId($packageId, $serviceId);
+        $storedOrg = $api->getClientOrgId(_enhance_client_id($params));
+        if ($storedSub && $storedOrg) {
+            $existing = $api->getSubscription(strtolower(trim($storedOrg)), (string) $storedSub);
+            if (EnhanceApi::isNotFound($existing)) {
+                $api->clearServiceSubscriptionId($packageId, $serviceId);
+                _enhance_forget_clientarea($serviceId);
+                if (function_exists('logActivity')) {
+                    logActivity(EnhanceLang::t('log.sub_gone_on_terminate', ['sub' => $storedSub, 'service' => $serviceId]));
+                }
+                return 'success';
+            }
+        }
+
         // Destructive action: only the explicitly stored subscription is used.
         $resolved = _enhance_resolve_subscription($api, $params, false);
         $orgId    = $resolved['orgId'];
@@ -631,8 +676,13 @@ function enhance_ServiceSingleSignOn(array $params): array
             throw new Exception(EnhanceLang::t('sso.not_linked'));
         }
 
-        $sso = $api->ownerSsoUrl(strtolower(trim($orgId)));
         $isAdmin = !empty($_SESSION['adminid']);
+        // Fork: clients open the panel only for Active services; admins always can.
+        if (!$isAdmin && (string) ($params['status'] ?? '') !== 'Active') {
+            throw new Exception(EnhanceLang::t('sso.inactive'));
+        }
+
+        $sso = $api->ownerSsoUrl(strtolower(trim($orgId)));
         if ($sso['url']) {
             // The same function serves the admin "log in" button: record who entered as the client.
             if ($isAdmin && function_exists('logActivity')) {
@@ -1221,9 +1271,9 @@ function _enhance_run_ResendAccess(array $params): string
         $email = (string) ($org['ownerEmail'] ?? '');
         if ($email === '') return EnhanceLang::t('svc.no_owner_email');
 
-        $sent = $api->sendAccessEmail(_enhance_client_id($params), $email, true);
-        if (!$sent['recovery']) return EnhanceLang::t('svc.recovery_failed', ['detail' => $sent['message']]);
-        if (!$sent['email']) return EnhanceLang::t('svc.email_failed', ['detail' => $sent['message']]);
+        // Fork: only Enhance's own password reset link; the module sends no WHMCS e-mail.
+        $sent = $api->triggerPasswordRecovery($email);
+        if ($err = _enhance_api_error($sent)) return EnhanceLang::t('svc.recovery_failed', ['detail' => $err]);
         return 'success';
     } catch (Throwable $e) {
         return $e->getMessage();
