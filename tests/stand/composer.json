@@ -1,0 +1,10 @@
+{
+    "description": "Local test stand for the Enhance WHMCS module (not deployed).",
+    "require": {
+        "php": ">=8.1",
+        "illuminate/database": "^11.0"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

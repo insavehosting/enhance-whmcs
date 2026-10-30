@@ -1,132 +1,100 @@
-## [1.0.2] - 2026-05-16
-
-### Fixed
-- **Critical** `createWebsite`: `subscriptionId` enviado como string em vez de `int` causava o erro
-  `Json deserialize error: invalid type: string "X", expected i32` na API do Enhance — corrigido
-  com cast explícito `(int)` antes de serializar o JSON.
-- Typo `YespleMode` → `SimpleMode` em `enhance_ConfigOptions()` (a chave inválida era ignorada
-  silenciosamente pelo WHMCS, o que desactivava o modo de selecção simples do dropdown de planos).
-- Chave de config `'plano'` renomeada para `'plan'` para consistência com os padrões WHMCS.
-
-### Added
-- `composer.json` adicionado ao módulo (o README mencionava `composer install` mas o ficheiro
-  não existia — embora o módulo não tenha dependências externas, o ficheiro é necessário para
-  não causar confusão).
-- Suporte a **Server Groups**: função `enhance_GetServerGroups()` adicionada, permitindo que o
-  WHMCS associe produtos a grupos de servidores Enhance específicos.
-- README actualizado para clarificar que `composer install` é opcional (sem dependências externas).
-
 # Changelog
 
-## Version 1.0.2-insave.1 (fork of webdighost v1.0.2)
+## 1.4.0-insave.1 - 2026-10-30
 
-### Fixed
+Fork of upstream 1.4.0. Upstream now contains most fixes of 1.0.2-insave.1 (profile edits only rename
+the linked organisation, organisations are created only by Create, Terminate never guesses, API errors
+keep the stored links, passwords and SSO links masked in the module log, daily sync fixed). Kept from
+the fork:
 
-- ClientEdit no longer creates Enhance organisations/logins or sends credential e-mails.
-  It only renames an already linked organisation, only when first/last/company name changed,
-  and only for clients with an Active/Suspended Enhance service.
-- Organisations are created only by CreateAccount. Suspend, Unsuspend, Terminate, ChangePackage
-  and SSO work with the linked organisation and fail instead of creating/relinking one.
-- An Enhance API error other than 404 no longer drops the stored EnhanceOrgId / SUBSCRIPTION_ID
-  (previously a timeout or 5xx could relink the client or create a duplicate organisation).
-- Automatic linking by organisation name removed; linking by owner e-mail is off by default
-  (`ENHANCE_AUTO_LINK_BY_EMAIL` in config.php) — it allowed handing another customer's organisation
-  or login to a client who changed their e-mail.
-- Terminate never guesses: without SUBSCRIPTION_ID it refuses; a 404 subscription counts as removed.
-  Subscription guessing (suspend/unsuspend/change package) skips subscriptions mapped to other services.
-- includes/hooks/enhance.php: removed the DailyCronJob that called
-  enhance_importer_run_daily_sync(true, 0) and threw a TypeError on every daily cron.
-- includes/hooks/enhance_importer_daily_sync.php: wrong require path (includes/modules/...) that
-  caused a fatal error on every WHMCS page; files are now loaded lazily inside the hook.
-- Daily sync only mirrors Active <-> Suspended and never revives Terminated/Cancelled services.
-- New org: if the Owner membership cannot be created, the org is rolled back.
-- Module log: generated login passwords are masked, one-time SSO URLs are redacted.
-- One welcome e-mail instead of two: the module no longer sends its own "Enhance Panel Access"
-  e-mail and no longer auto-creates that template (it carried EN/PT text). CreateAccount writes the
-  panel login to the service (username = login e-mail, password = generated password only when the
-  login was created by this order, otherwise empty), so the product welcome e-mail shows it via
-  {$service_username}/{$service_password}. Template: docs/welcome-email-template.md.
-- Portuguese leftovers removed (comments, importer status strings, .pt-only domain heuristics;
-  common .ua/.uk/.ro second-level suffixes added).
-- Admin service tab: website resolved from SUBSCRIPTION_ID (WEBSITE_ID was never set, so the tab
-  never showed); references to icon files that do not exist removed.
-- Client SSO is refused for non-Active services (admin area is not restricted).
-- Admin profile widget: actions use the org linked to the client, never an org ID from the request;
-  Delete Org is refused while the client has Active/Suspended Enhance services; Link Org validates
-  the UUID, checks the org exists and is not linked to another client; no API calls for clients
-  without Enhance hosting unless the admin opens the link form; output escaping.
+- **Your welcome e-mail plus Enhance's password link.** The module sends no e-mail of its own and
+  creates no "Enhance Panel Access" templates; the product welcome e-mail carries the panel address and
+  login (`{$service_username}`, the owner's e-mail). No password is stored or e-mailed: the password
+  WHMCS generated at order time is cleared from the service. After a successful Create, a login this
+  module created gets Enhance's password-setting link, once — also when an earlier attempt failed after
+  creating the login; a later plan of the same client gets none. Upstream sent its link while linking
+  the owner, so a Create that failed after that point never sent it on retry.
+  See [docs/welcome-email-template.md](docs/welcome-email-template.md).
+- **"Send password reset link"** (service module command, was "Resend panel access") only asks Enhance
+  to mail the owner a password-setting link.
+- **Client SSO only for Active services.** The client area refuses the panel login for Suspended,
+  Pending or Terminated services; admins are not restricted.
+- **Terminate:** a stored subscription that Enhance no longer has (404) counts as removed: the link is
+  cleared and Terminate succeeds instead of failing.
+- **Linking by owner e-mail is off by default.** On Create an existing organisation owned by the
+  client's e-mail is linked only with `ENHANCE_AUTO_LINK_BY_EMAIL` in `config.php`; otherwise a new
+  organisation is created (an existing login with that e-mail becomes its owner).
+- Local test stand: `tests/stand/run.sh` (fake Enhance API over HTTPS, WHMCS stand-ins on SQLite).
 
-## Version 1.0.1
+## 1.4.0 - 2026-10-29
 
-### Fixed
+### Client area
+- Direct login buttons per website: **webmail** (Roundcube, per mailbox), **phpMyAdmin** (per database)
+  and **WordPress admin** (the app's default user, otherwise the first administrator). Links are
+  created only when the client clicks, after checking that the website, mailbox, database or app
+  belongs to the service.
+- **SSL certificate** of the primary domain with expiry date and days left (highlighted from 14 days).
+- **Recent backups** (last 5) with date, type, size and status. Optional **restore** by the client
+  (product option, off by default): POST + CSRF token, account owner only, explicit confirmation,
+  successful backups only, optional mailboxes. Restores are written to the activity log.
+- Every website of the service is listed (1 or 1000), 5 per page, with a domain search; tools are loaded
+  only for the websites of the page shown (one API call for the whole list) and never while the
+  subscription is suspended. `ENHANCE_CLIENTAREA_WEBSITES_PER_PAGE` in `config.php`.
+- Backups show date and time, and the size of the backed up content (files + databases + emails) in
+  B/KB/MB/GB instead of the incremental delta rounded to "0 MB"; empty when Enhance reports 0;
+  `ENHANCE_CLIENTAREA_BACKUP_SIZE` hides it. Incremental backups with nothing to copy are not shown as failed; "no SSL certificate" is
+  only shown when Enhance confirms it; WordPress installed in the website root (`public_html`) shows no
+  path; WordPress brand icon fixed for Font Awesome 5.
+- Users of the client account need the WHMCS "Single Sign-On" (`productsso`) permission for the
+  login buttons; restores are reserved to the account owner.
 
-- Final client SSO implementation corrected.
-- Removed invalid fallback endpoints:
-  - `/members/{id}/ssoToken`
-  - `/members/{id}/login`
-- Enforced the official Enhance SSO endpoint:
-  - `/orgs/{orgId}/members/{memberId}/sso`
-- Fixed client area **Login to Panel** authentication failures.
-- Confirmed production compatibility with live Enhance environments.
+### Products
+- **Server group** option (configoption3, loaded from Enhance): where new websites are created.
+- **Client backup restore** option (configoption4).
+- The service **username** shows the Enhance login email (the organisation owner).
 
-### Notes
+### Admin
+- **Last module action** per service in the service tab (action, result, date) and the **last error**
+  with its message, kept until a newer error.
+- **Link / repair subscription** in the service tab: choose any subscription of the client's
+  organisation (subscriptions linked to other services are shown disabled), or remove the link.
+  Applied when the service is saved, under the per-client lock, after validating the subscription.
+- Logging in to the panel as the client from the admin service page is written to the activity log;
+  admins see the technical reason when it fails.
 
-This version should be considered the official GitHub release for public use.
+### Enhance Manager (settings)
+- The importer addon is now **Enhance Manager** (same folder and tables) with a new **Settings** tab:
+  colours with live preview, language, visible client area sections, websites per page, backups shown,
+  cache time and a global backup restore switch. Hidden sections are not requested from Enhance.
+- Settings are stored in `mod_enhance_settings`, so updates keep them; `config.php` no longer sets
+  defaults and only holds optional overrides, shown as locked in the Settings tab.
 
----
+### WHMCS integration
+- `whmcs.json` for the server module and the importer addon: name, description, features, authors and
+  support links in WHMCS > Apps & Integrations, with the module version in the description.
+- Module version shown in the importer title, the admin service tab and the client profile panel.
+- Messages and documentation point to the exact token page: `https://<panel>/settings/access-tokens`.
 
-## Version 1.0.0
+### Quality
+- Importer split into `lib/packages.php`, `lib/services.php` and `lib/sync.php`.
+- 39 API calls, all checked against the official OpenAPI specification (orchd 12.26.3).
 
-Initial stable public release
+## 1.3.1 - 2026-10-29
+- Per-client database lock (MySQL `GET_LOCK`) for Create, service import and organisation linking.
+- Logins looked up in the master organisation's realm; HTTP 409 on login creation reuses the login.
+- Client profile panel: organisation search (name or UUID) instead of listing every customer.
+- Importer Existing Services tab: 20 clients per page, 3 API calls per client.
+- Owner created directly with the `Owner` role (Enhance refuses `PUT /owner` and the `Owner` role on
+  member updates to access tokens); owner-less organisations repaired; existing owners never replaced.
+- Migration of the official Enhance module's data (`enhOrgId`, `enhanceSubscriptionId`, `subscriptionId`).
 
-### Added
-
-- WHMCS server module for Enhance Control Panel
-- Client Single Sign-On (SSO)
-- Direct admin login to Enhance panel
-- Automatic EnhanceOrgId creation
-- Automatic SUBSCRIPTION_ID creation
-- Client synchronization
-- Package provisioning
-- Robust suspend / unsuspend actions
-- Safe termination modes
-- Package importer addon
-- Manual package selection before import
-- Existing service importer
-- Import using EnhanceOrgId as primary match
-- Owner email fallback detection
-- Primary domain auto-detection
-- Multiple domain dropdown selection
-- Daily synchronization system
-- Manual sync execution
-- Duplicate prevention logic
-- CSRF protection for admin actions
-- Admin client profile Enhance widget
-- Package mapping between Enhance and WHMCS
-- Import validation and logging
-- Automatic database table creation
-- Better product display inside importer
-- Priority ordering for main domains over technical subdomains
-
-### Improved
-
-- Admin login behavior now uses direct panel access
-- Service import logic now uses EnhanceOrgId instead of email-first matching
-- Domain detection expanded to include full account domains
-- Importer UI improved with clearer product information
-- Technical resource summaries made readable
-- Existing product detection improved
-
-### Fixed
-
-- Broken admin SSO logic
-- Missing importer tabs
-- SQL missing table error
-- Incorrect service matching by owner email
-- Raw API output shown in technical summary
-- Nested addon folder installation issue
-- Import failures caused by missing import log tables
-
-### Notes
-
-This release replaces previous internal development builds and should be considered the first stable production release.
+## 1.3.0 - 2026-10-28
+- Authentication: HTML entities decoded, spaces/line breaks/`Bearer ` removed from the token, Password
+  field used when Access Hash is empty, redirects and HTML pages treated as errors, step-by-step
+  Test Connection (public `/version`, 401/403/404, token in the other field, first five characters).
+- English base with a complete European Portuguese translation.
+- Client profile panel buttons no longer submit the whole profile form (nested forms).
+- Profile edits only rename the linked organisation.
+- Password recovery uses only `PUT /login/password-recovery`.
+- Importer: billing cycles in the format `AddOrder` expects.
+- Web-accessible debug log removed.
